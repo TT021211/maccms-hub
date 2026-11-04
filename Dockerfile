@@ -1,7 +1,7 @@
 FROM node:20-alpine
 RUN apk add --no-cache ffmpeg
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY src ./src
 COPY test ./test
