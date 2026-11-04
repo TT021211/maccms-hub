@@ -128,6 +128,11 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
    看 `[hls]` 日志原文。
 10. **搜XX无结果但别的词有**：先看我们日志回了几条——回 N 条但前台无 = 被 MoonPlus 侧过滤；
     回 0 条 = 站内真没有或关键词被输入法搞错。
+11. **missav 已封存（2026-11-04）**：`sites/missav.js` 写完且测试全过，但 VPS 出口 IP
+    被 Cloudflare Managed Challenge 拦截（验证页 5544 字节，`Just a moment`），纯 HTTP
+    拿不到任何字节，故未接入 MoonTV。复活条件：换住宅 IP 出口，或上游 CF 策略放宽，
+    先跑 `docker exec maccms-hub node -e "fetch(...).then(...)"`（见上面）确认 `CF:false`
+    再配源。ThisAV 系域名同期已被 JAV Anti-Piracy Project 没收，不用再试。
 
 ## 7. 加一个新站（5 分钟）
 
