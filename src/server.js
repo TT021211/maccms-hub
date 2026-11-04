@@ -190,10 +190,19 @@ function hlsEvict() {
   } catch {}
 }
 
+// 详情页地址：默认 /watch?v=（hanime 系），适配器可用 detailUrl(vid, base) 覆盖（如 missav 的 /<slug>）
+function defaultDetailUrl(vid, base) {
+  return `${base}/watch?v=${encodeURIComponent(vid)}`;
+}
+
+function detailPageUrl(site, vid) {
+  const fn = site.def.detailUrl || defaultDetailUrl;
+  return fn(String(vid), site.base);
+}
+
 async function resolveMp4(site, vid) {
-  cache.delete('html:' + `${site.base}/watch?v=${encodeURIComponent(vid)}`);
-  void site.base; // 基地址由适配器 buildSearchUrl/详情页拼接使用
-  const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(vid)}`);
+  cache.delete('html:' + detailPageUrl(site, vid));
+  const html = await fetchHtml(site, detailPageUrl(site, vid));
   const d = site.def.parseDetail(html, String(vid));
   if (!d.sources.length) throw new Error('no playable source');
   return d.sources[0].src;
@@ -275,8 +284,8 @@ async function handlePlay(req, res) {
   if (!site) return res.status(404).json({ code: 0, msg: 'unknown site' });
   if (!v) return res.status(400).json({ code: 0, msg: 'missing ?v=vid' });
   try {
-    cache.delete('html:' + `${site.base}/watch?v=${encodeURIComponent(v)}`);
-    const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(v)}`);
+    cache.delete('html:' + detailPageUrl(site, v));
+    const html = await fetchHtml(site, detailPageUrl(site, v));
     const d = site.def.parseDetail(html, String(v));
     if (!d.sources.length) return res.status(404).json({ code: 0, msg: 'no playable source' });
     const best = d.sources[0];
@@ -415,7 +424,7 @@ async function handleDetail(site, req, res) {
         const ckey = `detail:${site.key}:` + vid;
         const cached = cacheGet(ckey);
         if (cached) return cached;
-        const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(vid)}`);
+        const html = await fetchHtml(site, detailPageUrl(site, vid));
         const d = site.def.parseDetail(html, vid);
         // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
         // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；

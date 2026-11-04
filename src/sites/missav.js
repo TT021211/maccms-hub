@@ -62,14 +62,25 @@ function buildSearchUrl({ genre = '', sort = '', query = '', pg = 1 }, base) {
 
 // 非视频 slug 黑名单（导航/聚合页）：命中则跳过。视频 slug 形如 dldss-572，必含数字。
 const NAV_SLUGS = new Set(
-  'new release uncensored-leak chinese-subtitle today-hot weekly-hot monthly-hot vr fc2 heyzo tokyohot 1pondo caribbeancom caribbeancompr 10musume pacopacomama gachinco xxxav marriedslash naughty4610 naughty0930 madou twav furuke siro luxu gana ara scute maan genres actresses makers series labels actors directors vip saved playlists history klive clive articles contact ads terms upload search ranking'.split(
+  'new release uncensored-leak chinese-subtitle today-hot weekly-hot monthly-hot vr fc2 heyzo tokyohot 1pondo caribbeancom caribbeancompr 10musume pacopacomama gachinco xxxav marriedslash naughty4610 naughty0930 madou twav furuke siro luxu gana ara scute maan genres actresses models series labels actors directors vip saved playlists history klive clive articles contact ads terms upload search ranking cn en ja ko ms th de fr vi id fil pt feed feedback 2257 dmca'.split(
     ' '
   )
 );
 
-function normVid(href) {
-  if (!href || !href.startsWith('/')) return '';
-  const m = href.split('#')[0].split('?')[0].match(/^\/(?:dm\d+\/)?([a-z0-9][a-z0-9\-_]*)\/?$/i);
+function normVid(href, base) {
+  if (!href || href.startsWith('#')) return '';
+  let p = '';
+  if (href.startsWith('/')) p = href;
+  else {
+    try {
+      const u = new URL(href, base || 'https://missav.ai');
+      p = u.hostname.endsWith('missav.ai') ? u.pathname : '';
+    } catch {
+      return '';
+    }
+    if (!p) return '';
+  }
+  const m = p.split('#')[0].split('?')[0].match(/^\/(?:dm\d+\/)?([a-z0-9][a-z0-9\-_]*)\/?$/i);
   if (!m) return '';
   const slug = m[1].toLowerCase();
   if (NAV_SLUGS.has(slug)) return '';
@@ -85,22 +96,34 @@ function parseList(html) {
   const $ = cheerio.load(html);
   const videos = [];
   const seen = new Set();
-  $('a[href]').each((_, a) => {
-    const vid = normVid($(a).attr('href') || '');
+  const push = (vid, title, pic) => {
     if (!vid || seen.has(vid)) return;
-    const inner = $(a);
-    let pic = '';
-    inner.find('img').each((__, img) => {
-      const src = $(img).attr('src') || $(img).attr('data-src') || '';
-      if (!src || /icon|avatar|logo|flag/i.test(src)) return;
-      if (!pic) pic = src.startsWith('//') ? 'https:' + src : src;
-    });
-    let title = clean(inner.find('img').first().attr('alt') || '');
-    if (!title) title = clean(inner.text()).slice(0, 120);
-    if (!title) return;
+    title = clean(title);
+    if (!title || !/[0-9]/.test(vid)) return;
+    if (pic && pic.startsWith('//')) pic = 'https:' + pic;
     seen.add(vid);
     videos.push({ vid, title, pic: pic || '' });
+  };
+  // 主路径：封面图 fourhoi.com/<slug>/cover-t.jpg 自带番号，取最近的 <a> 确认是卡片
+  $('img[src*="fourhoi.com/"]').each((_, img) => {
+    const src = $(img).attr('src') || $(img).attr('data-src') || '';
+    const m = src.match(/fourhoi\.com\/([a-z0-9][a-z0-9\-_]*)\//i);
+    if (!m) return;
+    const slug = m[1].toLowerCase();
+    if (NAV_SLUGS.has(slug)) return;
+    const anchor = $(img).closest('a');
+    const hrefVid = anchor.length ? normVid(anchor.attr('href') || '', 'https://missav.ai') : '';
+    const title = $(img).attr('alt') || (anchor.length ? anchor.text() : '');
+    push(hrefVid && hrefVid === slug ? hrefVid : slug, title, src);
   });
+  // 兜底：纯锚点扫描（无封面图时）
+  if (!videos.length) {
+    $('a[href]').each((_, a) => {
+      const vid = normVid($(a).attr('href') || '', 'https://missav.ai');
+      if (!vid) return;
+      push(vid, $(a).text(), '');
+    });
+  }
   return videos;
 }
 
@@ -188,6 +211,7 @@ module.exports = {
   UA_LIST,
   headersFor,
   buildSearchUrl,
+  detailUrl: (vid, base) => `${base}/${vid}`,
   parseList,
   parsePageCount,
   parseDetail,

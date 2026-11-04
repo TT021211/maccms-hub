@@ -120,12 +120,12 @@ async function main() {
     'https://missav.ai/new'
   );
 
-  // parseList：混入导航/广告链接，只收番号卡
+  // parseList：混入导航/广告链接，只收番号卡（真实渲染 DOM：绝对地址 + Vue 属性）
   const missavListHtml = `
-    <a href="/new">最近更新</a>
-    <a href="/dm301/today-hot">今日熱門</a>
+    <a href="https://missav.ai/dm539/new">最近更新</a>
+    <a href="https://missav.ai/dm301/today-hot">今日熱門</a>
     <a href="/genres">類型</a>
-    <a href="/dldss-572"><img src="https://fourhoi.com/dldss-572/cover-t.jpg" alt="DLDSS-572 標題"></a>
+    <a href="https://missav.ai/dldss-572"><img :class="{x:1}" data-src="https://fourhoi.com/dldss-572/cover-t.jpg" src="https://fourhoi.com/dldss-572/cover-t.jpg" alt="DLDSS-572 標題"></a>
     <a href="/dm14/pred-164-uncensored-leak"><img src="https://fourhoi.com/pred-164-uncensored-leak/cover-t.jpg"><span>PRED-164 標題</span></a>
     <a href="https://bit.ly/xyz">广告</a>
     <a href="#">top</a>`;
@@ -134,6 +134,11 @@ async function main() {
   assert.strictEqual(mItems[0].vid, 'dldss-572');
   assert.strictEqual(mItems[0].pic, 'https://fourhoi.com/dldss-572/cover-t.jpg');
   assert.strictEqual(mItems[1].vid, 'pred-164-uncensored-leak');
+  // 详情地址钩子
+  assert.strictEqual(
+    missav.detailUrl('dasd-542-uncensored-leak', 'https://missav.ai'),
+    'https://missav.ai/dasd-542-uncensored-leak'
+  );
 
   // parseDetail：字面 surrit 直链优先
   const dHtmlLit = `<html><head><meta property="og:title" content="DASD-542 标题 - MissAV"></head>
