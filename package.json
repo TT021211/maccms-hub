@@ -1,0 +1,15 @@
+{
+  "name": "maccms-hub",
+  "version": "1.0.0",
+  "description": "通用 MacCMS V10 provide/vod 采集网关：一个容器带 N 个刮削站（sites/ 下每个文件一个站）",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

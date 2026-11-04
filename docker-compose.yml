@@ -1,0 +1,24 @@
+# 本地联调 / 备用：云构建（GHCR）是主力，VPS 只 pull
+services:
+  maccms-hub:
+    build: .
+    # image: ghcr.io/tt021211/maccms-hub:latest
+    container_name: maccms-hub
+    environment:
+      - PORT=3001
+      - DEFAULT_SITE=hanime1
+      - HANIME_BASE=https://hanime1.me
+      - CACHE_TTL=7200
+      - PUBLIC_BASE_HANIME1=https://hanime1.acxou.hair
+    networks:
+      - maccms-net
+    restart: unless-stopped
+    volumes:
+      - hls-cache:/tmp/hls
+
+networks:
+  maccms-net:
+    name: maccms-net
+
+volumes:
+  hls-cache:

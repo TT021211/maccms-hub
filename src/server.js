@@ -1,0 +1,503 @@
+'use strict';
+
+/**
+ * maccms-hub 通用核心：MacCMS V10 provide/vod 采集网关 + HLS 播放链路。
+ * 站点差异全部下沉到 src/sites/<key>.js，本文件只做：
+ * 路由 / 缓存 / MacCMS 信封 / /play 302 / ffmpeg HLS 转封装。
+ *
+ * 地址形态（<site> = 站点 key，如 hanime1）：
+ *   列表/搜索/详情: /<site>/api.php/provide/vod/?ac=list&t=1&pg=1 ...
+ *   兼容老地址（无前缀 → DEFAULT_SITE，默认 hanime1，老 MoonTV 配置不用改）：
+ *                     /api.php/provide/vod/?ac=list&t=4&pg=1
+ *   直链: /play?site=<site>&v=VID        （兼容 /play?v=VID → 默认站）
+ *   HLS:  /h/<site>/<vid>/index.m3u8     （兼容 /h/<vid>/index.m3u8 → 默认站）
+ */
+
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const { execFile } = require('child_process');
+
+const PORT = Number(process.env.PORT || 3001);
+const CACHE_TTL = Number(process.env.CACHE_TTL || 7200) * 1000;
+const HLS_DIR = process.env.HLS_DIR || '/tmp/hls';
+const HLS_MAX_GB = Number(process.env.HLS_MAX_GB || 8);
+const DEFAULT_SITE = process.env.DEFAULT_SITE || 'hanime1';
+
+// ---- 加载站点适配器（_template.js 除外） ----
+const sitesDir = path.join(__dirname, 'sites');
+const sites = new Map();
+for (const f of fs.readdirSync(sitesDir)) {
+  if (!f.endsWith('.js') || f.startsWith('_')) continue;
+  const def = require(path.join(sitesDir, f));
+  if (!def || !def.key) continue;
+  const key = String(def.key).toLowerCase();
+  const base = (process.env[def.baseEnv || ''] || def.defaultBase || '').replace(/\/$/, '');
+  const publicBase = (
+    process.env[def.publicBaseEnv || ''] ||
+    process.env.PUBLIC_BASE ||
+    ''
+  ).replace(/\/$/, '');
+  sites.set(key, { def, key, base, publicBase });
+}
+if (!sites.has(DEFAULT_SITE)) {
+  console.warn(`[hub] DEFAULT_SITE=${DEFAULT_SITE} 不存在，可用站: ${[...sites.keys()].join(',') || '(无)'}`);
+}
+
+function siteOf(name) {
+  const s = sites.get(String(name || '').toLowerCase());
+  return s || null;
+}
+
+function fmtTime(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(
+    d.getMinutes()
+  )}:${p(d.getSeconds())}`;
+}
+
+// ---- 简单内存缓存 ----
+const cache = new Map(); // key -> { exp, data }
+function cacheGet(key) {
+  const e = cache.get(key);
+  if (!e) return null;
+  if (Date.now() > e.exp) {
+    cache.delete(key);
+    return null;
+  }
+  return e.data;
+}
+function cacheSet(key, data, ttl = CACHE_TTL) {
+  if (cache.size > 2000) cache.clear();
+  cache.set(key, { exp: Date.now() + ttl, data });
+}
+
+async function fetchHtml(site, url) {
+  const hit = cacheGet('html:' + url);
+  if (hit) return hit;
+  const uaList = (site.def.UA_LIST || []).filter(Boolean);
+  const uas = uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'];
+  let lastErr = null;
+  for (const ua of uas) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    try {
+      const res = await fetch(url, { headers: site.def.headersFor(ua, site.base), signal: ctrl.signal });
+      if (res.status === 403 || res.status === 503) {
+        lastErr = new Error(`upstream http ${res.status} for ${url}`);
+        continue; // 换 UA 重试 (CF 指纹拦截)
+      }
+      if (!res.ok) throw new Error(`upstream http ${res.status} for ${url}`);
+      const text = await res.text();
+      cacheSet('html:' + url, text);
+      return text;
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr || new Error('fetch failed for ' + url);
+}
+
+function ffExec(args, timeoutMs = 300000) {
+  return new Promise((resolve, reject) => {
+    execFile('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error('ffmpeg: ' + (stderr || err.message).slice(0, 500)));
+      else resolve(stdout);
+    });
+  });
+}
+
+function hlsVidDir(site, vid) {
+  // 默认站沿用老布局 /tmp/hls/<vid>（已缓存的切片不用重切）；其他站隔离到子目录防 vid 撞车
+  const safe = String(vid).replace(/[^0-9]/g, '') || 'x';
+  if (site.key === DEFAULT_SITE) return path.join(HLS_DIR, safe);
+  return path.join(HLS_DIR, site.key, safe);
+}
+
+// 总量超过上限时删最旧的整集目录
+function hlsEvict() {
+  try {
+    fs.mkdirSync(HLS_DIR, { recursive: true });
+    const collect = (root) =>
+      fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => {
+          const p = path.join(root, d.name);
+          let size = 0;
+          let mtime = 0;
+          let files = [];
+          try {
+            files = fs.readdirSync(p);
+          } catch {
+            return null;
+          }
+          for (const f of files) {
+            try {
+              const st = fs.statSync(path.join(p, f));
+              size += st.size;
+              mtime = Math.max(mtime, st.mtimeMs);
+            } catch {}
+          }
+          return { p, size, mtime };
+        })
+        .filter(Boolean);
+    let dirs = collect(HLS_DIR);
+    // 二级目录（按站隔离时）
+    for (const d of [...dirs]) {
+      try {
+        if (fs.statSync(d.p).isDirectory()) dirs = dirs.concat(collect(d.p));
+      } catch {}
+    }
+    dirs.sort((a, b) => a.mtime - b.mtime);
+    let total = dirs.reduce((s, d) => s + d.size, 0);
+    const cap = HLS_MAX_GB * 1024 * 1024 * 1024;
+    for (const d of dirs) {
+      if (total <= cap) break;
+      try {
+        fs.rmSync(d.p, { recursive: true, force: true });
+        total -= d.size;
+      } catch {}
+    }
+  } catch {}
+}
+
+async function resolveMp4(site, vid) {
+  cache.delete('html:' + `${site.base}/watch?v=${encodeURIComponent(vid)}`);
+  void site.base; // 基地址由适配器 buildSearchUrl/详情页拼接使用
+  const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(vid)}`);
+  const d = site.def.parseDetail(html, String(vid));
+  if (!d.sources.length) throw new Error('no playable source');
+  return d.sources[0].src;
+}
+
+const hlsJobs = new Map(); // `${site}:${vid}` -> Promise
+function ensureHls(site, vid) {
+  const dir = hlsVidDir(site, vid);
+  const playlist = path.join(dir, 'index.m3u8');
+  const doneFile = path.join(dir, '.done');
+  if (fs.existsSync(playlist) && fs.existsSync(doneFile)) return Promise.resolve(playlist);
+  const jobKey = `${site.key}:${vid}`;
+  if (hlsJobs.has(jobKey)) return hlsJobs.get(jobKey);
+  const job = (async () => {
+    hlsEvict();
+    fs.mkdirSync(dir, { recursive: true });
+    // 清掉上一轮残留
+    for (const f of fs.readdirSync(dir)) {
+      if (f !== '.done') {
+        try {
+          fs.rmSync(path.join(dir, f), { recursive: true, force: true });
+        } catch {}
+      }
+    }
+    try {
+      fs.rmSync(doneFile, { force: true });
+    } catch {}
+    const mp4 = await resolveMp4(site, vid);
+    console.log(`[hls][${site.key}] ${vid} remux start`);
+    const segPattern = path.join(dir, 's%05d.ts');
+    const inputArgs = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-headers',
+      `Referer: ${site.base}/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n`,
+      '-i',
+      mp4,
+    ];
+    const hlsArgs = [
+      '-map', '0:v:0', '-map', '0:a:0?',
+      '-f', 'hls', '-hls_time', '6', '-hls_list_size', '0',
+      '-hls_segment_filename', segPattern, playlist,
+    ];
+    try {
+      await ffExec(['-y', ...inputArgs, '-c', 'copy', ...hlsArgs]);
+    } catch (e) {
+      // copy 失败（如音频编码不兼容）则音频转 aac 重试一次
+      console.log(`[hls][${site.key}] ${vid} copy failed, retry with aac: ${String((e && e.message) || e).slice(0, 200)}`);
+      await ffExec(['-y', ...inputArgs, '-c:v', 'copy', '-c:a', 'aac', ...hlsArgs]);
+    }
+    if (!fs.existsSync(playlist)) throw new Error('hls playlist not generated');
+    fs.writeFileSync(doneFile, String(Date.now()));
+    console.log(`[hls][${site.key}] ${vid} remux done`);
+    return playlist;
+  })();
+  hlsJobs.set(jobKey, job);
+  job.catch(() => {}).finally(() => hlsJobs.delete(jobKey));
+  return job;
+}
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+// POST 搜索时把 body 参数并入 query (部分聚合端用 POST)
+app.use((req, _, next) => {
+  req.query = { ...(req.body || {}), ...(req.query || {}) };
+  next();
+});
+
+app.get('/health', (_, res) => res.json({ ok: true, sites: [...sites.keys()], time: fmtTime() }));
+
+// 直链解析: /play?site=<site>&v=VID -> 302 到最高清晰度; ?format=json 返回 JSON
+// 每次都绕过 html 缓存实时解析 (mp4 token 有效期短, 不能用缓存)
+async function handlePlay(req, res) {
+  const v = req.query.v || req.query.vid || req.query.id;
+  const site = siteOf(req.query.site || req.params.site || DEFAULT_SITE);
+  if (!site) return res.status(404).json({ code: 0, msg: 'unknown site' });
+  if (!v) return res.status(400).json({ code: 0, msg: 'missing ?v=vid' });
+  try {
+    cache.delete('html:' + `${site.base}/watch?v=${encodeURIComponent(v)}`);
+    const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(v)}`);
+    const d = site.def.parseDetail(html, String(v));
+    if (!d.sources.length) return res.status(404).json({ code: 0, msg: 'no playable source' });
+    const best = d.sources[0];
+    if (req.query.format === 'json')
+      return res.json({ code: 1, site: site.key, vid: String(v), url: best.src, sources: d.sources });
+    res.redirect(best.src);
+  } catch (e) {
+    res.status(502).json({ code: 0, msg: String(e.message || e) });
+  }
+}
+app.all(['/play', '/:site([a-z0-9-]+)/play'], handlePlay);
+
+// HLS: /h/<site>/<vid>/index.m3u8 + 切片（兼容老地址 /h/<vid>/... → 默认站）
+// mp4 仅转封装 (-c copy), 不转码; 切好后是完整 VOD, 切片落本地可反复播
+async function handleHlsPlaylist(req, res) {
+  const site = siteOf(req.params.site || DEFAULT_SITE);
+  const vid = req.params.vid || '';
+  if (!site) return res.status(404).json({ code: 0, msg: 'unknown site' });
+  if (!/^\d+$/.test(vid)) return res.status(400).json({ code: 0, msg: 'bad vid' });
+  try {
+    const p = await ensureHls(site, vid);
+    res.type('application/vnd.apple.mpegurl');
+    res.set('Cache-Control', 'no-cache');
+    fs.createReadStream(p).pipe(res);
+  } catch (e) {
+    const msg = 'hls failed: ' + String((e && e.message) || e).slice(0, 300);
+    console.error(`[hls][${site.key}] ${vid} ${msg}`);
+    res.status(502).json({ code: 0, msg });
+  }
+}
+app.get('/h/:site([a-z0-9-]+)/:vid/index.m3u8', handleHlsPlaylist);
+app.get('/h/:vid/index.m3u8', handleHlsPlaylist);
+
+app.get(['/h/:site([a-z0-9-]+)/:vid/:seg', '/h/:vid/:seg'], (req, res) => {
+  const site = siteOf(req.params.site || DEFAULT_SITE);
+  if (!site) return res.status(404).end();
+  const vid = req.params.vid || '';
+  const seg = req.params.seg || '';
+  if (!/^\d+$/.test(vid) || !/^[A-Za-z0-9]+\.ts$/.test(seg)) return res.status(400).end();
+  const dir = hlsVidDir(site, vid);
+  const f = path.resolve(dir, seg);
+  if (!f.startsWith(path.resolve(dir) + path.sep) && f !== path.resolve(dir)) return res.status(400).end();
+  if (!fs.existsSync(f)) return res.status(404).end();
+  res.type('video/mp2t');
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  fs.createReadStream(f).pipe(res);
+});
+
+async function handleList(site, req, res) {
+  const q = req.query;
+  const pg = Math.max(1, parseInt(q.pg || q.page || q.p || '1', 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(q.limit || q.pagesize || '20', 10) || 20));
+  const t = q.t || q.type || q.tid || q.type_id || '';
+  const wd = (q.wd || q.keyword || q.query || '').trim();
+
+  let url;
+  let typeName = '';
+  if (wd) {
+    url = site.def.buildSearchUrl({ query: wd, pg }, site.base);
+  } else if (t && site.def.catById(t)) {
+    const c = site.def.catById(t);
+    typeName = c.type_name;
+    url = site.def.buildSearchUrl({ genre: c.genre, sort: c.sort, pg }, site.base);
+  } else if (t) {
+    // 允许直接传 genre 中文: ?t=裏番
+    typeName = String(t);
+    url = site.def.buildSearchUrl({ genre: String(t), pg }, site.base);
+  } else {
+    url = site.def.buildSearchUrl({ pg }, site.base);
+  }
+
+  try {
+    const html = await fetchHtml(site, url);
+    const items = site.def.parseList(html);
+    const pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
+    const total = pagecount * limit;
+    const list = items.slice(0, limit).map((v) => ({
+      vod_id: v.vid,
+      vod_name: v.title,
+      type_id: t ? Number(t) || t : site.def.CATS[0] ? site.def.CATS[0].type_id : 1,
+      type_name: typeName || (t ? String(t) : site.def.CATS[0] ? site.def.CATS[0].type_name : ''),
+      vod_pic: v.pic,
+      vod_remarks: '',
+      vod_time: fmtTime(),
+      vod_play_from: site.def.displayName,
+      // 列表即带单集 HLS: MoonPlus 只收录 .m3u8 且按 episodes.length 过滤,
+      // 列表项本来没有 vod_play_url, 不拼会被整条扔掉
+      vod_play_url: site.publicBase ? `正片$${site.publicBase}/h/${site.key}/${v.vid}/index.m3u8` : undefined,
+    }));
+    res.__listLen = list.length;
+    res.json({
+      code: 1,
+      msg: '数据列表',
+      page: pg,
+      pagecount,
+      limit,
+      total,
+      list,
+      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name })),
+    });
+  } catch (e) {
+    res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
+  }
+}
+
+async function handleDetail(site, req, res) {
+  const q = req.query;
+  let ids = (q.ids || q.vod_id || q.id || '').split(',').map((s) => s.trim()).filter(Boolean);
+  // 兼容 ac=detail&t=1&pg=1 (返回该分类第一页的详情, 限 10 个防雪崩)
+  if (!ids.length && (q.t || q.wd || q.keyword)) {
+    const pg = Math.max(1, parseInt(q.pg || q.page || '1', 10) || 1);
+    const wd = (q.wd || q.keyword || '').trim();
+    const t = q.t || '';
+    let url;
+    if (wd) url = site.def.buildSearchUrl({ query: wd, pg }, site.base);
+    else if (site.def.catById(t)) {
+      const c = site.def.catById(t);
+      url = site.def.buildSearchUrl({ genre: c.genre, sort: c.sort, pg }, site.base);
+    } else url = site.def.buildSearchUrl({ pg }, site.base);
+    try {
+      const html = await fetchHtml(site, url);
+      ids = site.def.parseList(html).slice(0, 10).map((v) => v.vid);
+    } catch (e) {
+      return res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
+    }
+  }
+  if (!ids.length) return res.status(400).json({ code: 0, msg: 'missing ?ids=vid1,vid2' });
+  ids = ids.slice(0, 20); // 单次最多 20, 防上游限流
+
+  try {
+    const results = await Promise.all(
+      ids.map(async (vid) => {
+        const ckey = `detail:${site.key}:` + vid;
+        const cached = cacheGet(ckey);
+        if (cached) return cached;
+        const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(vid)}`);
+        const d = site.def.parseDetail(html, vid);
+        // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
+        // 否则拼上游站 watch 页 (仅跳转)
+        const epLink = (e) =>
+          site.publicBase
+            ? `${site.publicBase}/h/${site.key}/${e.vid}/index.m3u8`
+            : `${site.base}/watch?v=${e.vid}`;
+        const playUrl = d.episodes.map((e) => `${e.name}$${epLink(e)}`).join('#');
+        const bestQ = d.sources.length && d.sources[0].size ? `${d.sources[0].size}p` : '';
+        const vod = {
+          vod_id: vid,
+          vod_name: d.title,
+          type_id: site.def.CATS[0] ? site.def.CATS[0].type_id : 1,
+          type_name: d.genreName || (site.def.CATS[0] ? site.def.CATS[0].type_name : ''),
+          vod_pic: d.pic,
+          vod_actor: d.actor,
+          vod_content: d.desc,
+          vod_remarks: bestQ || `${d.episodes.length}集`,
+          vod_year: '',
+          vod_area: '',
+          vod_lang: '',
+          vod_time: fmtTime(),
+          vod_play_from: site.def.displayName,
+          vod_play_server: '',
+          vod_play_note: '',
+          vod_play_url: playUrl,
+          vod_tag: (d.tags || []).join(','),
+          vod_class: (d.tags || []).join(','),
+        };
+        cacheSet(ckey, vod, Math.min(CACHE_TTL, 3600 * 1000));
+        // 轻微限流
+        await new Promise((r) => setTimeout(r, 120));
+        return vod;
+      })
+    );
+    res.__listLen = results.length;
+    res.json({
+      code: 1,
+      msg: '数据列表',
+      page: 1,
+      pagecount: 1,
+      limit: String(results.length),
+      total: results.length,
+      list: results,
+      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name })),
+    });
+  } catch (e) {
+    res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
+  }
+}
+
+function dispatchWith(siteName, req, res) {
+  const site = siteOf(siteName);
+  if (!site) return res.status(404).json({ code: 0, msg: `unknown site: ${siteName}` });
+  const t0 = Date.now();
+  const q = req.query;
+  const ac = (q.ac || '').toLowerCase();
+  const summary = `site=${site.key} ac=${ac || '(none)'} t=${q.t || ''} pg=${q.pg || q.page || ''} wd=${(q.wd || q.keyword || q.query || '').slice(0, 30)} ids=${String(q.ids || '').slice(0, 60)}`;
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${summary}`);
+  res.on('finish', () => {
+    try {
+      const len = res.__listLen;
+      if (len !== undefined) console.log(`  -> ${len} items in ${Date.now() - t0}ms`);
+    } catch {}
+  });
+  if (ac === 'detail' || (q.ids && !ac)) return handleDetail(site, req, res);
+  if (ac === 'list' || ac === '' || ac === 'videolist') {
+    // ?ids= 优先走详情 (MacCMS 采集器行为)
+    if (q.ids) return handleDetail(site, req, res);
+    return handleList(site, req, res);
+  }
+  return res.status(400).json({ code: 0, msg: 'unknown ac, use ac=list|detail' });
+}
+
+// MacCMS 标准路径 + 兼容路径 (GET/POST 都接, 部分聚合端用 POST 搜索)
+// 带站点前缀（多站共存）：
+app.all(
+  [
+    '/:site([a-z0-9-]+)/api.php/provide/vod/',
+    '/:site([a-z0-9-]+)/api.php/provide/vod',
+    '/:site([a-z0-9-]+)/api/provide/vod',
+    '/:site([a-z0-9-]+)/vod',
+    '/:site([a-z0-9-]+)/provide/vod',
+  ],
+  (req, res) => dispatchWith(req.params.site, req, res)
+);
+// 无前缀（兼容老 hanime1-maccms 地址 → DEFAULT_SITE）：
+app.all(
+  ['/api.php/provide/vod/', '/api.php/provide/vod', '/api/provide/vod', '/vod', '/provide/vod'],
+  (req, res) => dispatchWith(DEFAULT_SITE, req, res)
+);
+
+// 根路径 ?ac=list 可直接用 (方便 MoonTV custom API 测试)；无参数时列出站点
+app.all('/', (req, res) => {
+  if (req.query.ac || req.query.wd || req.query.ids || req.query.t)
+    return dispatchWith(req.query.site || DEFAULT_SITE, req, res);
+  const demo = siteOf(DEFAULT_SITE);
+  res.json({
+    ok: true,
+    name: 'maccms-hub',
+    sites: [...sites.keys()],
+    usage: demo ? `/api.php/provide/vod/?ac=list&t=${demo.def.CATS[0]?.type_id ?? 1}&pg=1` : '',
+    usage_prefixed: demo ? `/${demo.key}/api.php/provide/vod/?ac=list&t=${demo.def.CATS[0]?.type_id ?? 1}&pg=1` : '',
+    play: '/play?site=<site>&v=<vid>',
+    class: demo ? demo.def.CATS : [],
+  });
+});
+
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`[maccms-hub] listening :${PORT} sites=${[...sites.keys()].join(',')}`));
+}
+
+module.exports = { app, sites, siteOf, DEFAULT_SITE };
