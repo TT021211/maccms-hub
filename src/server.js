@@ -337,9 +337,12 @@ async function handleList(site, req, res) {
       vod_remarks: '',
       vod_time: fmtTime(),
       vod_play_from: site.def.displayName,
-      // 列表即带单集 HLS: MoonPlus 只收录 .m3u8 且按 episodes.length 过滤,
-      // 列表项本来没有 vod_play_url, 不拼会被整条扔掉
-      vod_play_url: site.publicBase ? `正片$${site.publicBase}/h/${site.key}/${v.vid}/index.m3u8` : undefined,
+      // 直通站（原生 m3u8，如 missav）：列表不拼选集，详情页自带直链；
+      // 非直通站：列表带单集 HLS（MoonPlus 只收录 .m3u8 且按 episodes.length 过滤）
+      vod_play_url:
+        !site.def.passthrough && site.publicBase
+          ? `正片$${site.publicBase}/h/${site.key}/${v.vid}/index.m3u8`
+          : undefined,
     }));
     res.__listLen = list.length;
     res.json({
@@ -390,11 +393,13 @@ async function handleDetail(site, req, res) {
         const html = await fetchHtml(site, `${site.base}/watch?v=${encodeURIComponent(vid)}`);
         const d = site.def.parseDetail(html, vid);
         // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
+        // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；
         // 否则拼上游站 watch 页 (仅跳转)
         const epLink = (e) =>
-          site.publicBase
+          e.url ||
+          (site.publicBase
             ? `${site.publicBase}/h/${site.key}/${e.vid}/index.m3u8`
-            : `${site.base}/watch?v=${e.vid}`;
+            : `${site.base}/watch?v=${e.vid}`);
         const playUrl = d.episodes.map((e) => `${e.name}$${epLink(e)}`).join('#');
         const bestQ = d.sources.length && d.sources[0].size ? `${d.sources[0].size}p` : '';
         const vod = {

@@ -101,6 +101,59 @@ async function main() {
     srv.close();
   }
 
+  // 6. missav 适配器
+  const missav = require('../src/sites/missav');
+  assert.strictEqual(missav.key, 'missav');
+  assert.strictEqual(missav.passthrough, true);
+  assert.strictEqual(missav.CATS.length, 13);
+  assert.strictEqual(missav.catById(3).genre, '/uncensored-leak');
+  assert.ok(
+    missav.buildSearchUrl({ query: 'SSIS', pg: 1 }, 'https://missav.ai') ===
+      'https://missav.ai/search/SSIS',
+    missav.buildSearchUrl({ query: 'SSIS', pg: 1 }, 'https://missav.ai')
+  );
+  assert.ok(
+    missav.buildSearchUrl({ genre: '/new', pg: 2 }, 'https://missav.ai').includes('page=2')
+  );
+  assert.strictEqual(
+    missav.buildSearchUrl({ pg: 1 }, 'https://missav.ai'),
+    'https://missav.ai/new'
+  );
+
+  // parseList：混入导航/广告链接，只收番号卡
+  const missavListHtml = `
+    <a href="/new">最近更新</a>
+    <a href="/dm301/today-hot">今日熱門</a>
+    <a href="/genres">類型</a>
+    <a href="/dldss-572"><img src="https://fourhoi.com/dldss-572/cover-t.jpg" alt="DLDSS-572 標題"></a>
+    <a href="/dm14/pred-164-uncensored-leak"><img src="https://fourhoi.com/pred-164-uncensored-leak/cover-t.jpg"><span>PRED-164 標題</span></a>
+    <a href="https://bit.ly/xyz">广告</a>
+    <a href="#">top</a>`;
+  const mItems = missav.parseList(missavListHtml);
+  assert.strictEqual(mItems.length, 2, JSON.stringify(mItems));
+  assert.strictEqual(mItems[0].vid, 'dldss-572');
+  assert.strictEqual(mItems[0].pic, 'https://fourhoi.com/dldss-572/cover-t.jpg');
+  assert.strictEqual(mItems[1].vid, 'pred-164-uncensored-leak');
+
+  // parseDetail：字面 surrit 直链优先
+  const dHtmlLit = `<html><head><meta property="og:title" content="DASD-542 标题 - MissAV"></head>
+    <body><h1>fallback</h1><video><source src="https://surrit.com/abc/playlist.m3u8"></video></body></html>`;
+  const dd1 = missav.parseDetail(dHtmlLit, 'dasd-542-uncensored-leak');
+  assert.strictEqual(dd1.title, 'DASD-542 标题');
+  assert.strictEqual(dd1.sources[0].src, 'https://surrit.com/abc/playlist.m3u8');
+  assert.strictEqual(dd1.episodes[0].url, 'https://surrit.com/abc/playlist.m3u8');
+
+  // parseDetail：脚本内 UUID → 拼 playlist（广告位 blob UUID 无 surrit 上下文，不会被误取）
+  const dHtmlUuid = `<html><body>
+    <iframe src="blob:https://missav.ai/723f72fb-a8bd-45e8-b06c-ab67ce8cb34a"></iframe>
+    <script>var player={cdn:"surrit",uuid:"9eca65c0-66dc-44c9-9fb4-edf9a576146d",quality:"1080p"};</script>
+    </body></html>`;
+  const dd2 = missav.parseDetail(dHtmlUuid, 'x');
+  assert.strictEqual(
+    dd2.episodes[0].url,
+    'https://surrit.com/9eca65c0-66dc-44c9-9fb4-edf9a576146d/playlist.m3u8'
+  );
+
   console.log('smoke OK: adapter + framework routes');
 }
 
