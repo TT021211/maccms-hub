@@ -50,6 +50,14 @@ function siteOf(name) {
   return s || null;
 }
 
+// ScraperAPI 中转（给 CF 站用，如 missav）：render=true 是必须的，普通模式会被拒。
+// 结果按原始 URL 缓存，credits 只花在缓存未命中时。
+function buildRelayUrl(url) {
+  const key = process.env.SCRAPERAPI_KEY || '';
+  if (!key) return null;
+  return `http://api.scraperapi.com?api_key=${key}&url=${encodeURIComponent(url)}&render=true`;
+}
+
 function fmtTime(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(
@@ -76,6 +84,23 @@ function cacheSet(key, data, ttl = CACHE_TTL) {
 async function fetchHtml(site, url) {
   const hit = cacheGet('html:' + url);
   if (hit) return hit;
+  // 中转模式（missav 这类 CF 站）：走 ScraperAPI render，结果按原 URL 缓存
+  if (site.def.useRelay) {
+    const relay = buildRelayUrl(url);
+    if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 150000);
+    try {
+      console.log(`[relay][${site.key}] ${url.slice(0, 120)}`);
+      const res = await fetch(relay, { signal: ctrl.signal });
+      if (!res.ok) throw new Error(`relay http ${res.status} for ${url}`);
+      const text = await res.text();
+      cacheSet('html:' + url, text);
+      return text;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   const uaList = (site.def.UA_LIST || []).filter(Boolean);
   const uas = uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'];
   let lastErr = null;
@@ -505,4 +530,4 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`[maccms-hub] listening :${PORT} sites=${[...sites.keys()].join(',')}`));
 }
 
-module.exports = { app, sites, siteOf, DEFAULT_SITE };
+module.exports = { app, sites, siteOf, DEFAULT_SITE, buildRelayUrl };

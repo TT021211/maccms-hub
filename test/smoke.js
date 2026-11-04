@@ -154,6 +154,20 @@ async function main() {
     'https://surrit.com/9eca65c0-66dc-44c9-9fb4-edf9a576146d/playlist.m3u8'
   );
 
+  // 7. 中转 URL 拼装（离线断言，不发请求）
+  const { buildRelayUrl } = require('../src/server');
+  const prevKey = process.env.SCRAPERAPI_KEY;
+  process.env.SCRAPERAPI_KEY = 'testkey123';
+  const relayUrl = buildRelayUrl('https://missav.ai/dm539/new');
+  assert.ok(
+    relayUrl ===
+      'http://api.scraperapi.com?api_key=testkey123&url=https%3A%2F%2Fmissav.ai%2Fdm539%2Fnew&render=true',
+    relayUrl
+  );
+  delete process.env.SCRAPERAPI_KEY;
+  assert.strictEqual(buildRelayUrl('https://missav.ai/'), null);
+  if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
+
   console.log('smoke OK: adapter + framework routes');
 }
 

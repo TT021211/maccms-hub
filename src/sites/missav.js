@@ -182,6 +182,7 @@ module.exports = {
   publicBaseEnv: 'PUBLIC_BASE_MISSAV',
   uaEnv: 'MISSAV_UA',
   passthrough: true, // 原生 m3u8 直传：列表不拼 /h/，详情用自带 url
+  useRelay: true, // CF 站：fetchHtml 走 ScraperAPI render 中转（需 SCRAPERAPI_KEY）
   CATS,
   catById,
   UA_LIST,

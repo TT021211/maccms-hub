@@ -34,7 +34,8 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 环境变量：`PORT`（3001）、`DEFAULT_SITE`（`hanime1`，无前缀地址走它）、
 `<KEY>_BASE`（如 `HANIME_BASE`）、`CACHE_TTL`（默认 7200）、
 `PUBLIC_BASE_<KEY>`（如 `PUBLIC_BASE_HANIME1=https://hanime1.acxou.hair`，不设则回退 watch 页）、
-`HLS_DIR`（默认 `/tmp/hls`）、`HLS_MAX_GB`（默认 8）。
+`HLS_DIR`（默认 `/tmp/hls`）、`HLS_MAX_GB`（默认 8）、`SCRAPERAPI_KEY`
+（只给开 `useRelay` 的 CF 站用，如 missav；hanime1 等直连站不受影响）。
 
 ## 3. 接口
 
@@ -128,11 +129,12 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
    看 `[hls]` 日志原文。
 10. **搜XX无结果但别的词有**：先看我们日志回了几条——回 N 条但前台无 = 被 MoonPlus 侧过滤；
     回 0 条 = 站内真没有或关键词被输入法搞错。
-11. **missav 已封存（2026-11-04）**：`sites/missav.js` 写完且测试全过，但 VPS 出口 IP
-    被 Cloudflare Managed Challenge 拦截（验证页 5544 字节，`Just a moment`），纯 HTTP
-    拿不到任何字节，故未接入 MoonTV。复活条件：换住宅 IP 出口，或上游 CF 策略放宽，
-    先跑 `docker exec maccms-hub node -e "fetch(...).then(...)"`（见上面）确认 `CF:false`
-    再配源。ThisAV 系域名同期已被 JAV Anti-Piracy Project 没收，不用再试。
+11. **missav（2026-11-04 已打通，走 ScraperAPI render 中转）**：VPS 直连被 CF 拦截，
+    实测 UA 轮换 ❌ / TLS 伪装 ❌ / AnySearch 提取 ❌，仅 `render=true` 真渲染通过
+    （列表 198K / 详情 328K，UUID 与 surrit seek 图双印证）。
+    网关 `fetchHtml` 支持 `useRelay`（`sites/missav.js` 已开，需 `SCRAPERAPI_KEY`，按次计费，
+    2 小时缓存挡重复），hanime1 等直连站零影响。ThisAV 系域名同期已被 JAV Anti-Piracy
+    Project 没收，不用再试。
 
 ## 7. 加一个新站（5 分钟）
 
