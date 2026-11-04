@@ -120,6 +120,10 @@ async function main() {
     'https://missav.ai/new'
   );
 
+  // 分页熔断：虚高页码锁死在 pg+10，防无限翻页烧中转额度
+  assert.strictEqual(missav.parsePageCount('<a href="?page=2000">末页</a>', 1), 11);
+  assert.strictEqual(missav.parsePageCount('<a href="?page=5">5</a>', 1), 5);
+
   // parseList：混入导航/广告链接，只收番号卡（真实渲染 DOM：绝对地址 + Vue 属性）
   const missavListHtml = `
     <a href="https://missav.ai/dm539/new">最近更新</a>

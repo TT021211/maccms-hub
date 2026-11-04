@@ -137,7 +137,9 @@ function parsePageCount(html, pg) {
       if (!isNaN(n) && n > max && n < 10000) max = n;
     }
   }
-  return max;
+  // 熔断：渲染页 JS 里常混进大数字（如年份/统计），pagecount 虚高会导致频道无限翻页、
+  // 每个空页都烧一次中转额度。上限锁死 pg+10（11 页 ≈ 220 部，个人用足够）。
+  return Math.min(max, pg + 10);
 }
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
