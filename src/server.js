@@ -81,6 +81,27 @@ function cacheSet(key, data, ttl = CACHE_TTL) {
   cache.set(key, { exp: Date.now() + ttl, data });
 }
 
+// ScraperAPI 试用 key 并发低，多路并发 render 会被排队超时；网关侧串行化（FIFO 排队），宁可慢不能挂
+const RELAY_MAX_CONCURRENT = Number(process.env.RELAY_MAX_CONCURRENT || 3);
+let relayRunning = 0;
+const relayQueue = [];
+function relayAcquire() {
+  return new Promise((resolve) => {
+    if (relayRunning < RELAY_MAX_CONCURRENT) {
+      relayRunning++;
+      resolve();
+    } else {
+      console.log(`[relay] 并发已满，排队 depth=${relayQueue.length + 1}`);
+      relayQueue.push(resolve);
+    }
+  });
+}
+function relayRelease() {
+  const next = relayQueue.shift();
+  if (next) next();
+  else relayRunning--;
+}
+
 async function fetchHtml(site, url) {
   const hit = cacheGet('html:' + url);
   if (hit) return hit;
@@ -88,6 +109,7 @@ async function fetchHtml(site, url) {
   if (site.def.useRelay) {
     const relay = buildRelayUrl(url);
     if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
+    await relayAcquire();
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 150000);
     try {
@@ -99,6 +121,7 @@ async function fetchHtml(site, url) {
       return text;
     } finally {
       clearTimeout(timer);
+      relayRelease();
     }
   }
   const uaList = (site.def.UA_LIST || []).filter(Boolean);
@@ -539,4 +562,4 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`[maccms-hub] listening :${PORT} sites=${[...sites.keys()].join(',')}`));
 }
 
-module.exports = { app, sites, siteOf, DEFAULT_SITE, buildRelayUrl };
+module.exports = { app, sites, siteOf, DEFAULT_SITE, buildRelayUrl, __relayTest: { acquire: relayAcquire, release: relayRelease } };

@@ -163,7 +163,21 @@ async function main() {
     'https://surrit.com/9eca65c0-66dc-44c9-9fb4-edf9a576146d/playlist.m3u8'
   );
 
-  // 7. 中转 URL 拼装（离线断言，不发请求）
+  // 6b. 中转排队：同一事件循环内串行化（RELAY_MAX_CONCURRENT=1 时验证 FIFO）
+  delete require.cache[require.resolve('../src/server')];
+  process.env.RELAY_MAX_CONCURRENT = '1';
+  const hub2 = require('../src/server');
+  let order = [];
+  const p1 = hub2.__relayTest.acquire().then(() => order.push('first'));
+  const p2 = hub2.__relayTest.acquire().then(() => order.push('second'));
+  await new Promise((r) => setImmediate(r)); // 让第二次 acquire 进入队列
+  assert.deepStrictEqual(order, ['first']); // 第一个立即拿到，第二个排队
+  hub2.__relayTest.release(); // 释放 → 第二个拿到
+  await p1;
+  await p2;
+  assert.deepStrictEqual(order, ['first', 'second']);
+  hub2.__relayTest.release();
+  delete process.env.RELAY_MAX_CONCURRENT;
   const { buildRelayUrl } = require('../src/server');
   const prevKey = process.env.SCRAPERAPI_KEY;
   process.env.SCRAPERAPI_KEY = 'testkey123';
