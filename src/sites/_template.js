@@ -94,7 +94,9 @@ module.exports = {
 
   // TODO(必填): 从详情页 HTML 抠出标题/封面/直链/选集/tags
   // sources 必须按清晰度降序（框架拿 sources[0] 当最高清晰度做 /play 302）
-  parseDetail(html, vid) {
+  // 第三个参数 playHtml：默认和 html 相同；开了 expandDetailUrl 的站这里是子页 HTML
+  // （m3u8 从子页提，标题/封面/分类/tags 从详情页提），见 hohoj.js
+  parseDetail(html, vid, playHtml) {
     const $ = cheerio.load(html);
     return {
       title: ($('h1').first().text() || `video ${vid}`).replace(/\s+/g, ' ').trim(),
@@ -120,4 +122,7 @@ module.exports = {
   //   网关侧并发排队 RELAY_MAX_CONCURRENT 默认 3）。直连站不要开。
   // 页面混淆（如 aqdlt 的 sojson）：在 parseList/parseDetail 开头先还原再 cheerio，
   //   参考 sites/aqdlt.js 的 deobfuscate()（vm 跑站点自己的解码桩 + document.write 劫持）。
+  // expandDetailUrl(metaHtml, vid, base): 详情页只是个壳、真实播放地址在内嵌 iframe/子页时
+  //   （如 hohoj 的 /embed?id=），返回子页地址，框架自动跟进抓取并把子页 HTML 作为
+  //   parseDetail 的第三个参数传入；返回 null/与详情页相同则不跟进。
 };

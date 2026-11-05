@@ -2,7 +2,7 @@
 
 把任意刮削站实时转成 **MacCMS V10 `provide/vod` 采集接口** + **HLS 播放链路**，
 供 MoonTVPlus（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
-含 `/hanime` 里番 / `/missav` / `/aqdlt` 爱情岛三个频道）聚合搜索与播放。
+含 `/hanime` 里番 / `/missav` / `/aqdlt` 爱情岛 / `/hohoj` 四个频道）聚合搜索与播放。
 
 仓库：`https://github.com/TT021211/maccms-hub`（Public；push 即云构建 `ghcr.io/tt021211/maccms-hub:latest`，amd64+arm64）
 
@@ -28,6 +28,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | `src/sites/hanime1.js` | hanime1 适配器（13 分类 + 解析，行为与老服务一致） |
 | `src/sites/missav.js` | MissAV 适配器（13 分类，surrit 原生 m3u8 直传 + `useRelay` 中转） |
 | `src/sites/aqdlt.js` | 爱情岛适配器（13 分类，sojson 还原 + cdn.aqd-tv 原生 m3u8 直传） |
+| `src/sites/hohoj.js` | HoHoJ 适配器（13 分类，iframe 二跳 `/embed` + ggjav 原生 m3u8 直传，720P） |
 | `src/sites/_template.js` | 新站模板（复制填空，见第 8 节） |
 | `test/smoke.js` | 离线冒烟测试（`npm test`）：适配器解析 + 路由回归 |
 | `Dockerfile` | `node:20-alpine` + `ffmpeg`，`npm ci --omit=dev`（**必须同时 COPY package.json + package-lock.json**） |
@@ -66,7 +67,8 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 |---|---|---|---|
 | hanime1 | 直连抓取 | mp4 → `/h/` ffmpeg 转封装 | 老服务原样迁移 |
 | missav | ScraperAPI render 中转（`useRelay`） | surrit 原生 m3u8 直传（`passthrough`） | 详情页内联脚本 UUID → `surrit.com/<UUID>/playlist.m3u8`；播放须开 MoonTV 源 proxyMode（surrit 只认 missav.ai Referer，见 6.12） |
-| aqdlt 爱情岛 | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框 |
+| aqdlt 爱情岛 | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框；m3u8 无 CORS 头，须开 MoonTV 源 proxyMode |
+| hohoj | 直连抓取（无 CF） | ggjav 原生 m3u8 直传（`passthrough`，单码率 720p） | 详情页是壳，真实地址在内嵌 `/embed?id=` 子页（框架 `expandDetailUrl` 自动跟进）；m3u8 自带 CORS 头，直连可播 |
 
 直传站列表不带 `vod_play_url`（聚合搜索会被 MoonTV 按 `episodes.length>0` 过滤），
 只走独立频道/源站寻片；详情自带 m3u8，播放页直连详情即可。
@@ -97,20 +99,22 @@ nginx（`/opt/nginx/conf.d/hanime1.acxou.hair.conf`）：`proxy_pass http://macc
 证书沿用老流程（`certbot --config-dir /opt/nginx/certbot/conf`，见老文档）。
 
 MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime` `/missav`
-`/aqdlt` 三个频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
+`/aqdlt` `/hohoj` 四个频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
 
 ```
 源管理 → 自定义源：
   key: hanime1, api: http://maccms-hub:3001/hanime1/api.php/provide/vod
   key: missav,  api: http://maccms-hub:3001/missav/api.php/provide/vod   + 开 proxyMode
-  key: aqdlt,   api: http://maccms-hub:3001/aqdlt/api.php/provide/vod
+  key: aqdlt,   api: http://maccms-hub:3001/aqdlt/api.php/provide/vod     + 开 proxyMode
+  key: hohoj,   api: http://maccms-hub:3001/hohoj/api.php/provide/vod
 后台打开「禁用黄色过滤器」（环境变量 NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true，
 否则 Cosplay 分类会被黄词表杀掉）
 ```
 
 missav 必须开 proxyMode：surrit 只认 `https://missav.ai/` 的 Referer，
 播放走本站 `/api/proxy/vod/m3u8` 中转（`UPSTREAM_REFERER_OVERRIDE` 已配好）。
-aqdlt 先直连试播，不行再同样开 proxyMode。
+aqdlt 也必须开：cdn.aqd-tv 的 m3u8 不带 CORS 头，浏览器直连被拦（分片 200 但无 ACAO）。
+hohoj 不用开：ggjav 自带 `Access-Control-Allow-Origin: *`，直连可播。
 
 ## 5. 日常运维
 
@@ -172,6 +176,22 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 14. **aqdlt 只有 480p**：ffprobe 实测单码率 `720×480` H.264+AAC，无高清档。能量大管饱，
     画质党当备用源。另：本站暂无站内搜索，`buildSearchUrl` 遇到 `wd` 直接抛错，
     频道页不设搜索框（聚合搜索天然过滤直传站，只走频道/寻片）。
+15. **dispatch 兜底（2026-11-05）**：适配器抛错（如 aqdlt 拒搜）曾直接掀翻网关进程
+    （Express 4 不收 async rejection → unhandledRejection → 退出，`RestartCount` 连涨）。
+    现 dispatchWith 同步 try/catch + 异步 `.catch()` 转 502 JSON，单站报错只影响当次请求。
+    教训：任何适配器逻辑都不许假设成功，框架层必须兜底。
+16. **Docker 网络分裂（2026-11-05）**：磁盘写满那次把网络状态库写坏，出现
+    `docker exec nginx-proxy wget maccms-hub` 报 `bad address`，但 `network connect`
+    返回成功。确诊：`docker inspect maccms-hub` 显示 endpoint 的 `IPAddress:""` 为空
+    （僵尸 endpoint）。解法：`docker network disconnect -f hanime1-net maccms-hub`
+    → `docker stop/rm maccms-hub` → `compose up -d` 重建拿新 IP，再两边 inspect 对账。
+    教训：connect 返回 0 不等于连上了，以两边 inspect 为准。
+17. **VPS 磁盘 19G 爆满（2026-11-05）**：转码写不进盘、拉镜像失败、daemon 行为异常都源于此。
+    账单：hls-cache 4.8G（上限 8G，正常）+ `/var/swapfile` 4.1G（别动）+ 孤儿卷
+    （已删 freellm/panwatch/lunatv 的，`docker volume ls` 对着删，注意 7f6d3b0c 是线上
+    kvrocks 在用的随机名卷，删了播放记录全没）+ suwayomi 镜像 2.09G（不用就删）。
+    `/var/lib/docker/rootfs` 3.2G 身份未明，先别动。结论：以后每月 `docker image prune -a`
+    + `builder prune -af` 各一次；19G 盘是紧的，考虑加盘。
 
 ## 7. 加一个新站（5 分钟）
 
