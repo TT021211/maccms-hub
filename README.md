@@ -1,7 +1,8 @@
 # maccms-hub 交接文档（线上在用）
 
 把任意刮削站实时转成 **MacCMS V10 `provide/vod` 采集接口** + **HLS 播放链路**，
-供 MoonTVPlus（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，含 `/hanime` 里番频道）聚合搜索与播放。
+供 MoonTVPlus（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
+含 `/hanime` 里番 / `/missav` / `/aqdlt` 爱情岛三个频道）聚合搜索与播放。
 
 仓库：`https://github.com/TT021211/maccms-hub`（Public；push 即云构建 `ghcr.io/tt021211/maccms-hub:latest`，amd64+arm64）
 
@@ -23,8 +24,10 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 
 | 文件 | 说明 |
 |---|---|
-| `src/server.js` | 通用核心：路由/缓存/MacCMS 信封/`/play`/ffmpeg HLS，多站共存 |
+| `src/server.js` | 通用核心：路由/缓存/MacCMS 信封/`/play`/ffmpeg HLS/中转排队，多站共存 |
 | `src/sites/hanime1.js` | hanime1 适配器（13 分类 + 解析，行为与老服务一致） |
+| `src/sites/missav.js` | MissAV 适配器（13 分类，surrit 原生 m3u8 直传 + `useRelay` 中转） |
+| `src/sites/aqdlt.js` | 爱情岛适配器（13 分类，sojson 还原 + cdn.aqd-tv 原生 m3u8 直传） |
 | `src/sites/_template.js` | 新站模板（复制填空，见第 8 节） |
 | `test/smoke.js` | 离线冒烟测试（`npm test`）：适配器解析 + 路由回归 |
 | `Dockerfile` | `node:20-alpine` + `ffmpeg`，`npm ci --omit=dev`（**必须同时 COPY package.json + package-lock.json**） |
@@ -35,7 +38,8 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 `<KEY>_BASE`（如 `HANIME_BASE`）、`CACHE_TTL`（默认 7200）、
 `PUBLIC_BASE_<KEY>`（如 `PUBLIC_BASE_HANIME1=https://hanime1.acxou.hair`，不设则回退 watch 页）、
 `HLS_DIR`（默认 `/tmp/hls`）、`HLS_MAX_GB`（默认 8）、`SCRAPERAPI_KEY`
-（只给开 `useRelay` 的 CF 站用，如 missav；hanime1 等直连站不受影响）。
+（只给开 `useRelay` 的 CF 站用，如 missav；hanime1/aqdlt 等直连站不受影响）、
+`RELAY_MAX_CONCURRENT`（中转并发上限，默认 3，试用 key 并发低不要调大）。
 
 ## 3. 接口
 
@@ -55,6 +59,17 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 
 `t` 对照（hanime1）：1最新里番 2最新上市 3最新上傳 4裏番 5泡麵番 6MotionAnime 7 3DCG
 8 2.5D 9 2D動畫 10 AI生成 11 MMD 12 Cosplay 13 新番預告（也支持 `?t=裏番` 中文直传）。
+
+## 3.5 各站形态一览
+
+| 站 | 列表/详情 | 播放源 | 备注 |
+|---|---|---|---|
+| hanime1 | 直连抓取 | mp4 → `/h/` ffmpeg 转封装 | 老服务原样迁移 |
+| missav | ScraperAPI render 中转（`useRelay`） | surrit 原生 m3u8 直传（`passthrough`） | 详情页内联脚本 UUID → `surrit.com/<UUID>/playlist.m3u8`；播放须开 MoonTV 源 proxyMode（surrit 只认 missav.ai Referer，见 6.12） |
+| aqdlt 爱情岛 | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框 |
+
+直传站列表不带 `vod_play_url`（聚合搜索会被 MoonTV 按 `episodes.length>0` 过滤），
+只走独立频道/源站寻片；详情自带 m3u8，播放页直连详情即可。
 
 ## 4. 部署（VPS 现状，`/opt/maccms-hub/docker-compose.yml`）
 
@@ -81,14 +96,21 @@ nginx（`/opt/nginx/conf.d/hanime1.acxou.hair.conf`）：`proxy_pass http://macc
 改完 `docker exec nginx-proxy nginx -t && docker exec nginx-proxy nginx -s reload`。
 证书沿用老流程（`certbot --config-dir /opt/nginx/certbot/conf`，见老文档）。
 
-MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime` 频道，
-代码在 `https://github.com/TT021211/MoonTVPlus`）：
+MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime` `/missav`
+`/aqdlt` 三个频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
 
 ```
-源管理 → 自定义源：key: hanime1, api: http://maccms-hub:3001/hanime1/api.php/provide/vod
+源管理 → 自定义源：
+  key: hanime1, api: http://maccms-hub:3001/hanime1/api.php/provide/vod
+  key: missav,  api: http://maccms-hub:3001/missav/api.php/provide/vod   + 开 proxyMode
+  key: aqdlt,   api: http://maccms-hub:3001/aqdlt/api.php/provide/vod
 后台打开「禁用黄色过滤器」（环境变量 NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true，
 否则 Cosplay 分类会被黄词表杀掉）
 ```
+
+missav 必须开 proxyMode：surrit 只认 `https://missav.ai/` 的 Referer，
+播放走本站 `/api/proxy/vod/m3u8` 中转（`UPSTREAM_REFERER_OVERRIDE` 已配好）。
+aqdlt 先直连试播，不行再同样开 proxyMode。
 
 ## 5. 日常运维
 
@@ -135,6 +157,21 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     网关 `fetchHtml` 支持 `useRelay`（`sites/missav.js` 已开，需 `SCRAPERAPI_KEY`，按次计费，
     2 小时缓存挡重复），hanime1 等直连站零影响。ThisAV 系域名同期已被 JAV Anti-Piracy
     Project 没收，不用再试。
+12. **missav 播放链路**：详情页 UUID → surrit m3u8 直传，但 surrit 只认
+    `https://missav.ai/` 的 Referer（curl 实测：自己/空 Referer 403，missav 的 200），
+    浏览器直连必被拦。解法：MoonTV 源开 proxyMode，播放走本站 `/api/proxy/vod/m3u8`
+    中转，服务端带正确 Referer 去拿（`UPSTREAM_REFERER_OVERRIDE`，m3u8/segment/key
+    三处共用）。另：MoonTV 详情接口默认 10 秒超时，中转一次 24~48 秒必被 abort
+    （`{"error":"This operation was aborted"}`），已提到 120 秒（`downstream.ts`）。
+13. **aqdlt sojson 整站混淆（2026-11-05 打通）**：列表/详情 HTML 全是反转字符串载荷 +
+    解码桩 `document.write` 还原。网关用 Node vm 跑站点自己的解码器（只给 document 桩，
+    无网络/定时器，5 秒超时），还原后再 cheerio 解析，模板已沉淀（`_template.js` 进阶钩子）。
+    附带三个小坑：① 标题在 `<a>` 的 `alt` 属性里（不是 `title`），多候选取最长；
+    ② 同一视频两个 `<a>`（缩略图卡 + 标题行），按 vid 合并；③ 封面 `src` 是占位图，
+    真图在 `data-src/data-original`，优先取，跳过 4135 占位图。
+14. **aqdlt 只有 480p**：ffprobe 实测单码率 `720×480` H.264+AAC，无高清档。能量大管饱，
+    画质党当备用源。另：本站暂无站内搜索，`buildSearchUrl` 遇到 `wd` 直接抛错，
+    频道页不设搜索框（聚合搜索天然过滤直传站，只走频道/寻片）。
 
 ## 7. 加一个新站（5 分钟）
 
