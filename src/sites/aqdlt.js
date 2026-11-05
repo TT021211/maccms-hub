@@ -151,12 +151,19 @@ function pickPic($, anchor) {
 function parseList(html) {
   const $ = cheerio.load(deobfuscate(html));
   // 同一视频有两个 <a>（缩略图卡 + 标题行），按 vid 合并：标题取最长的，封面取真实的
+  // 注意：缩略卡 <a> 的标题在 alt 属性（不是 title），图片 alt 也是全标题
   const byVid = new Map();
   $('a[href]').each((_, a) => {
     const vid = normVid($(a).attr('href') || '', '');
     if (!vid) return;
     const inner = $(a);
-    const title = clean(inner.attr('title') || '') || clean(inner.text()).slice(0, 120);
+    const cands = [
+      clean(inner.attr('title') || ''),
+      clean(inner.attr('alt') || ''),
+      clean(inner.find('img').first().attr('alt') || ''),
+      clean(inner.text()).slice(0, 120),
+    ].filter(Boolean);
+    const title = cands.sort((x, y) => y.length - x.length)[0] || '';
     const pic = pickPic($, inner);
     const cur = byVid.get(vid) || { vid, title: '', pic: '' };
     if (title.length > cur.title.length) cur.title = title;

@@ -209,9 +209,9 @@ async function main() {
   assert.strictEqual(aqdlt.parsePageCount('第 1 页 / 共 2794 页', 1), 500);
 
   // sojson 载荷：反转字符串 + 解码桩 document.write 还原
-  // 真实卡片是双锚点（缩略图卡标题短/占位图 + 标题行全标题），合并后取最长标题+真实封面
+  // 真实卡片是双锚点（缩略图卡标题在 alt 里 + 标题行全标题），合并后取最长标题+真实封面
   const aqInner =
-    '<div><a href="/videos/play/50419.html" title="推荐 30:00"><img src="https://img14.360buyimg.com/ddimg/jfs/t1/170741/16/31531/4135/635abc45E3a8484bb/7f0fec842f6b8fea.png" data-src="https://img2.fuqiu1688.com:606/thumbs/050/50419_cover_480x270.jpg"></a>' +
+    '<div><a href="/videos/play/50419.html" alt="糖心Vlog 完整标题文字"><img src="https://img14.360buyimg.com/ddimg/jfs/t1/170741/16/31531/4135/635abc45E3a8484bb/7f0fec842f6b8fea.png" data-src="https://img2.fuqiu1688.com:606/thumbs/050/50419_cover_480x270.jpg" alt="糖心Vlog 完整标题文字"></a>' +
     '<a href="/videos/play/50419.html">糖心Vlog 完整标题文字</a>' +
     '<a href="/videos/category/cn.html">中國大陸</a></div>';
   const aqPayload = aqInner.split('').reverse().join('');
