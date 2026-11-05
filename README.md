@@ -193,6 +193,14 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     `/var/lib/docker/rootfs` 3.2G 身份未明，先别动。结论：以后每月 `docker image prune -a`
     + `builder prune -af` 各一次；19G 盘是紧的，考虑加盘。
 
+18. **HoHoJ 翻页双坑（2026-11-05，本地实测打通）**：① 站内翻页参数是 `p`
+    （分页全是 `javascript:changePage(N)` 跳转，无码类 729 页），网关之前按 `page=` 发，
+    2 页以后永远回第一页。`buildSearchUrl` 已改 `p=${pg}`。② `parsePageCount` 原来只认
+    `共N页/?page=/page/`，在 hohoj 眼里恒等于当前页 → MoonTVPlus 侧 `page < pageCount`
+    永假，下滑直接判死。已加 `changePage\((\d+)\)` 识别（上限 500）。
+    验证：`t=2 pg=2` 回 20 条新数据、`pagecount:500`（之前 `pagecount:1`）。
+    教训：新站先拿 `?ac=videolist&t=X&pg=2` 对新旧两页的 vod_id，有重复/页数不动就是翻页参数错了。
+
 ## 7. 加一个新站（5 分钟）
 
 1. 复制 `src/sites/_template.js` → `src/sites/xxx.js`，填 `key/CATS/buildSearchUrl/parseList/parseDetail`
@@ -201,3 +209,17 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 3. `git push` → Action 绿 → VPS `docker compose pull && docker compose up -d`。
 4. MoonTV 后台加源：`api: http://maccms-hub:3001/xxx/api.php/provide/vod`。
 5. 内网验证：`.../xxx/api.php/provide/vod/?ac=list&t=1&pg=1` 有 `list[].vod_play_url` 且以 `.m3u8` 结尾。
+
+## 8. MoonTVPlus 爆改记录（2026-11-05，仓库 `TT021211/MoonTVPlus`，与本网关联动）
+
+- 主题：`src/app/mutefun-theme.css`（mutefun.tv 风：浅底 + 红橙主色），`layout.tsx` 挂载。
+- 播放页：工具条只留下载/复制链接/App跳转/去广告/超分+选集；左右 26% 热区双击快退/快进；
+  删推荐/豆瓣评论/AI评论/网盘弹窗/AI面板/快捷键弹窗。
+- 黄色过滤默认开，搜索页“高级”下拉有前台开关（`?yellowFilter=`，6 个搜索/分类接口全支持）；
+  R18 四频道专属路由 bypass —— VPS 上 `NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true` 可以拿掉了。
+- 自定义分类每行独立启用/禁用（后台本来就有，不用改）。
+- 大删除：观影室/WebTV/直播/漫画/书/音乐/求片/AI/通知/离线下载/短剧等路由+API+组件
+  （约 -5.6 万行），保留搜索/豆瓣/播放/收藏/下载/四频道；`admin` 后台没动。
+- 通用自建源新建 `/browse` 页（源切换 + 真实 `?ac=list` 父/子分类 + 网格 + 去重收敛的下滑加载），
+  导航“源浏览”；`api/source-search` 恢复（分类补 `?yellowFilter=`，videos 补 `pageCount` 兜底）。
+- 联动：本网关 hohoj 翻页修复（见 6.18）必须 `push → VPS pull`，否则 HoHoJ 频道翻页还是死的。

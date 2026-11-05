@@ -54,7 +54,8 @@ function buildSearchUrl({ genre = '', sort = '', query = '', pg = 1 }, base) {
   if (query) url = `${base}/search?text=${encodeURIComponent(query)}`;
   else if (genre) url = `${base}${genre.startsWith('/') ? genre : '/' + genre}`;
   else url = `${base}/`;
-  if (pg > 1) url += (url.includes('?') ? '&' : '?') + `page=${pg}`;
+  // 站内翻页参数是 p（分页是 changePage(N) 跳转），不是 page
+  if (pg > 1) url += (url.includes('?') ? '&' : '?') + `p=${pg}`;
   return url;
 }
 
@@ -142,12 +143,13 @@ function parsePageCount(html, pg) {
     const n = parseInt(m[1], 10);
     if (!isNaN(n) && n > max) max = Math.min(n, 500);
   }
-  const pats = [/[?&]page=(\d+)/g, /\/page\/(\d+)/g];
+  // 站内分页是 javascript:changePage(N)（最后页链接即总页数），没有 ?page= 写法
+  const pats = [/[?&]page=(\d+)/g, /\/page\/(\d+)/g, /changePage\((\d+)\)/g];
   for (const re of pats) {
     let mm;
     while ((mm = re.exec(text))) {
       const n = parseInt(mm[1], 10);
-      if (!isNaN(n) && n > max && n < 10000) max = n;
+      if (!isNaN(n) && n > max && n < 10000) max = Math.min(n, 500);
     }
   }
   return max;
