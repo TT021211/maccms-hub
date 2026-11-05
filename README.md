@@ -200,6 +200,13 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     永假，下滑直接判死。已加 `changePage\((\d+)\)` 识别（上限 500）。
     验证：`t=2 pg=2` 回 20 条新数据、`pagecount:500`（之前 `pagecount:1`）。
     教训：新站先拿 `?ac=videolist&t=X&pg=2` 对新旧两页的 vod_id，有重复/页数不动就是翻页参数错了。
+19. **HoHoJ 导航全量分类（2026-11-05）**：站内导航（`/extra_info` 的 nav_collapse）是个大标签库，
+    12 个 `/main_ctg` 主题 + 约 570 个 `/ctg` 标签，之前只接了内置 13 个。现 `ensureNavCats`
+    在列表/详情前把导航并进 CATS（24 小时缓存，失败回退内置；`server.js` 经可选钩子调用，
+    不影响其他站）。动态 id：`main_ctg` 缺的 4 个 → `1000+N`，`ctg` 全量 → `2000+N`，
+    与内置重复 path 的跳过。验证：`?ac=list` 回 586 个分类；`t=2011（巨乳）pg=1/2` 各 20 条
+    且不重复。MoonTVPlus 侧零改动（分类/视频接口自动透出，频道胶囊行横滑浏览）。注意频道页
+    胶囊一次渲染五百多个按钮，低端机首屏会重一点，可接受。
 
 ## 7. 加一个新站（5 分钟）
 

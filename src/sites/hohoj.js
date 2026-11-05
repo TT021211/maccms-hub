@@ -187,6 +187,51 @@ function parseDetail(html, vid, playHtml) {
   return { title, pic: picRaw, desc, actor, genreName, sources, episodes, tags: tagLinks.slice(0, 30) };
 }
 
+// 站内导航（/extra_info 的 nav_collapse）是个大标签库：12 个 /main_ctg 主题 + 约 570 个
+// /ctg 标签。内置 13 个 CATS 只覆盖一小部分，这里把导航全量并进来（24 小时缓存），
+// 按真实站点类别同步。动态 id 用数字偏移避开内置 1-13：main_ctg 缺的 4 个 → 1000+N，
+// ctg 全量 → 2000+N。与内置重复 path 的跳过（如 main_ctg?id=8 已有 亂倫）。
+let navCatsLoadedAt = 0;
+const NAV_TTL_MS = 24 * 3600 * 1000;
+
+async function ensureNavCats(base, fetchFn) {
+  const now = Date.now();
+  if (now - navCatsLoadedAt < NAV_TTL_MS && CATS.length > 13) return;
+  try {
+    const url = (base || 'https://hohoj.tv').replace(/\/$/, '') + '/extra_info';
+    const res = await fetchFn(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    const nav = (data && data.nav_collapse) || '';
+    if (!nav) return;
+    const havePaths = new Set(CATS.map((c) => c.genre));
+    const seen = new Set();
+    const add = (type_id, type_name, genre) => {
+      if (!genre || havePaths.has(genre) || seen.has(genre)) return;
+      seen.add(genre);
+      havePaths.add(genre);
+      CATS.push({ type_id, type_name, genre, sort: '' });
+    };
+    const re = /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
+    let m;
+    while ((m = re.exec(nav))) {
+      const href = m[1];
+      const name = (m[2] || '').replace(/\s+/g, ' ').trim();
+      if (!name || name.length > 20) continue;
+      let mm = href.match(/^\/main_ctg\?id=(\d+)/i);
+      if (mm) {
+        add(1000 + parseInt(mm[1], 10), name, `/main_ctg?id=${mm[1]}`);
+        continue;
+      }
+      mm = href.match(/^\/ctg\?id=(\d+)/i);
+      if (mm) add(2000 + parseInt(mm[1], 10), name, `/ctg?id=${mm[1]}`);
+    }
+    navCatsLoadedAt = now;
+  } catch {
+    // 导航拉取失败不影响列表：继续用内置 13 个
+  }
+}
+
 module.exports = {
   key: 'hohoj',
   displayName: 'HoHoJ',
@@ -200,6 +245,7 @@ module.exports = {
   UA_LIST,
   headersFor,
   buildSearchUrl,
+  ensureNavCats,
   detailUrl,
   expandDetailUrl,
   parseList,

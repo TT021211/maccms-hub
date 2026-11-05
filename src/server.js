@@ -387,6 +387,11 @@ async function handleList(site, req, res) {
 
   let url;
   let typeName = '';
+  // 适配器可选钩子：先让站点把动态分类并进来（如 hohoj 的站内导航标签库），
+  // 失败也不影响（回退内置 CATS），绝不能抛到外层。
+  try {
+    if (site.def.ensureNavCats) await site.def.ensureNavCats(site.base, fetch);
+  } catch {}
   if (wd) {
     url = site.def.buildSearchUrl({ query: wd, pg }, site.base);
   } else if (t && site.def.catById(t)) {
@@ -443,6 +448,9 @@ async function handleDetail(site, req, res) {
   let ids = (q.ids || q.vod_id || q.id || '').split(',').map((s) => s.trim()).filter(Boolean);
   // 兼容 ac=detail&t=1&pg=1 (返回该分类第一页的详情, 限 10 个防雪崩)
   if (!ids.length && (q.t || q.wd || q.keyword)) {
+    try {
+      if (site.def.ensureNavCats) await site.def.ensureNavCats(site.base, fetch);
+    } catch {}
     const pg = Math.max(1, parseInt(q.pg || q.page || '1', 10) || 1);
     const wd = (q.wd || q.keyword || '').trim();
     const t = q.t || '';
