@@ -213,7 +213,8 @@ function hlsEvict() {
   } catch {}
 }
 
-// 详情页地址：默认 /watch?v=（hanime 系），适配器可用 detailUrl(vid, base) 覆盖（如 missav 的 /<slug>）
+// 详情页地址：默认 /watch?v=（hanime 系），适配器可用 detailUrl(vid, base) 覆盖
+// （missav 的 /<slug>、aqdlt 的 /videos/play/<vid>.html、hohoj 的 /video?id=<vid>）
 function defaultDetailUrl(vid, base) {
   return `${base}/watch?v=${encodeURIComponent(vid)}`;
 }
@@ -223,10 +224,30 @@ function detailPageUrl(site, vid) {
   return fn(String(vid), site.base);
 }
 
+// 有些站详情页只是个壳（标题/封面），真实播放地址在内嵌 iframe/子页里
+// （如 hohoj 的 /embed?id=）。适配器可用 expandDetailUrl(metaHtml, vid, base)
+// 返回子页地址，框架会接着抓子页；parseDetail(html, vid, playHtml) 拿子页提 m3u8。
+async function fetchPlayableHtml(site, vid) {
+  const metaUrl = detailPageUrl(site, vid);
+  const metaHtml = await fetchHtml(site, metaUrl);
+  if (typeof site.def.expandDetailUrl === 'function') {
+    try {
+      const embedUrl = site.def.expandDetailUrl(metaHtml, vid, site.base);
+      if (embedUrl && embedUrl !== metaUrl) {
+        const playHtml = await fetchHtml(site, embedUrl);
+        return { metaHtml, playHtml };
+      }
+    } catch (e) {
+      console.warn(`[expand][${site.key}] ${vid} 子页抓取失败，用详情页兜底: ${(e && e.message) || e}`);
+    }
+  }
+  return { metaHtml, playHtml: metaHtml };
+}
+
 async function resolveMp4(site, vid) {
   cache.delete('html:' + detailPageUrl(site, vid));
-  const html = await fetchHtml(site, detailPageUrl(site, vid));
-  const d = site.def.parseDetail(html, String(vid));
+  const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
+  const d = site.def.parseDetail(metaHtml, String(vid), playHtml);
   if (!d.sources.length) throw new Error('no playable source');
   return d.sources[0].src;
 }
@@ -308,8 +329,8 @@ async function handlePlay(req, res) {
   if (!v) return res.status(400).json({ code: 0, msg: 'missing ?v=vid' });
   try {
     cache.delete('html:' + detailPageUrl(site, v));
-    const html = await fetchHtml(site, detailPageUrl(site, v));
-    const d = site.def.parseDetail(html, String(v));
+    const { metaHtml, playHtml } = await fetchPlayableHtml(site, v);
+    const d = site.def.parseDetail(metaHtml, String(v), playHtml);
     if (!d.sources.length) return res.status(404).json({ code: 0, msg: 'no playable source' });
     const best = d.sources[0];
     if (req.query.format === 'json')
@@ -447,8 +468,8 @@ async function handleDetail(site, req, res) {
         const ckey = `detail:${site.key}:` + vid;
         const cached = cacheGet(ckey);
         if (cached) return cached;
-        const html = await fetchHtml(site, detailPageUrl(site, vid));
-        const d = site.def.parseDetail(html, vid);
+        const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
+        const d = site.def.parseDetail(metaHtml, vid, playHtml);
         // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
         // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；
         // 否则拼上游站 watch 页 (仅跳转)

@@ -237,6 +237,36 @@ async function main() {
   assert.strictEqual(aqD.sources[0].src, 'https://cdn.aqd-tv.com/video/594c5149/playlist/594c5149.m3u8');
   assert.strictEqual(aqD.episodes[0].url, 'https://cdn.aqd-tv.com/video/594c5149/playlist/594c5149.m3u8');
 
+  // 9. hohoj 适配器（iframe 二跳 + 原生 m3u8 直传）
+  const hohoj = require('../src/sites/hohoj');
+  assert.strictEqual(hohoj.key, 'hohoj');
+  assert.strictEqual(hohoj.passthrough, true);
+  assert.strictEqual(hohoj.CATS.length, 13);
+  assert.strictEqual(
+    hohoj.detailUrl('7557', 'https://hohoj.tv'),
+    'https://hohoj.tv/video?id=7557'
+  );
+  assert.strictEqual(
+    hohoj.expandDetailUrl('<iframe src="/embed?id=7557">', '7557', 'https://hohoj.tv'),
+    'https://hohoj.tv/embed?id=7557'
+  );
+  assert.strictEqual(hohoj.expandDetailUrl('<div>无播放器</div>', '1', 'https://hohoj.tv'), null);
+  assert.ok(hohoj.buildSearchUrl({ query: 'test', pg: 1 }, 'https://hohoj.tv').includes('/search?q=test'));
+  assert.strictEqual(
+    hohoj.buildSearchUrl({ genre: '/search?type=uncensored', pg: 1 }, 'https://hohoj.tv'),
+    'https://hohoj.tv/search?type=uncensored'
+  );
+  const hoItems = hohoj.parseList(
+    '<div><a href="/video?id=7557" title="测试标题"><img src="https://x/cover.jpg"></a>' +
+      '<a href="/search?type=uncensored">無碼</a></div>'
+  );
+  assert.strictEqual(hoItems.length, 1, JSON.stringify(hoItems));
+  assert.strictEqual(hoItems[0].vid, '7557');
+  assert.strictEqual(
+    hohoj.parseDetail('<h1>T</h1>', '7557', '<script>var u="https://cdn/x/playlist.m3u8";</script>').episodes[0].url,
+    'https://cdn/x/playlist.m3u8'
+  );
+
   console.log('smoke OK: adapter + framework routes');
 }
 
