@@ -251,7 +251,7 @@ async function main() {
     'https://hohoj.tv/embed?id=7557'
   );
   assert.strictEqual(hohoj.expandDetailUrl('<div>无播放器</div>', '1', 'https://hohoj.tv'), null);
-  assert.ok(hohoj.buildSearchUrl({ query: 'test', pg: 1 }, 'https://hohoj.tv').includes('/search?q=test'));
+  assert.ok(hohoj.buildSearchUrl({ query: 'test', pg: 1 }, 'https://hohoj.tv').includes('/search?text=test'));
   assert.strictEqual(
     hohoj.buildSearchUrl({ genre: '/search?type=uncensored', pg: 1 }, 'https://hohoj.tv'),
     'https://hohoj.tv/search?type=uncensored'

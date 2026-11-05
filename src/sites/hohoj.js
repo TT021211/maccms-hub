@@ -47,11 +47,11 @@ function clean(s) {
   return (s || '').replace(/\s+/g, ' ').trim();
 }
 
-// 列表/分类地址（genre 存完整 path）。搜索走 /search?q=（已验证返回过滤结果）。
+// 列表/分类地址（genre 存完整 path）。搜索走 /search?text=（已验证返回过滤结果）。
 function buildSearchUrl({ genre = '', sort = '', query = '', pg = 1 }, base) {
   void sort;
   let url;
-  if (query) url = `${base}/search?q=${encodeURIComponent(query)}`;
+  if (query) url = `${base}/search?text=${encodeURIComponent(query)}`;
   else if (genre) url = `${base}${genre.startsWith('/') ? genre : '/' + genre}`;
   else url = `${base}/`;
   if (pg > 1) url += (url.includes('?') ? '&' : '?') + `page=${pg}`;
@@ -120,7 +120,10 @@ function parseList(html) {
     const vid = normVid($(a).attr('href') || '', '');
     if (!vid) return;
     const inner = $(a);
-    const title = clean(inner.attr('title') || '') || clean(inner.text()).slice(0, 120);
+    const title =
+      clean(inner.attr('title') || '') ||
+      clean(inner.find('img').first().attr('alt') || '') ||
+      clean(inner.text()).slice(0, 120);
     if (!title) return;
     const pic = pickPic($, inner);
     const cur = byVid.get(vid) || { vid, title: '', pic: '' };
