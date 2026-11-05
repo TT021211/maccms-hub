@@ -1,0 +1,238 @@
+'use strict';
+
+/**
+ * 爱情岛站点适配器（https://vip.aqdm888.com:20844 等镜像，AQDLT_BASE 可换）。
+ * 页面是 sojson 混淆（`var html='...'` 反转字符串 + 解码桩 document.write 还原），
+ * 解析前先用 vm 还原（只给 document/console 桩，无网络能力，5 秒超时）。
+ * 详情页内嵌原生 m3u8（cdn.aqd-tv.com）→ passthrough 直传，无需转封装/中转。
+ * 注意：本站暂未发现站内搜索入口，buildSearchUrl 遇到 query 直接抛错，
+ * 框架转 502，聚合搜索单源失败自动跳过；频道页不设搜索框。
+ */
+
+const cheerio = require('cheerio');
+const vm = require('vm');
+
+const CATS = [
+  { type_id: 1, type_name: '最新更新', genre: '', sort: '' },
+  { type_id: 2, type_name: '中國大陸', genre: '/videos/category/cn.html', sort: '' },
+  { type_id: 3, type_name: '歐美', genre: '/videos/category/west.html', sort: '' },
+  { type_id: 4, type_name: '日本', genre: '/videos/category/jp.html', sort: '' },
+  { type_id: 5, type_name: '韓國', genre: '/videos/category/kr.html', sort: '' },
+  { type_id: 6, type_name: '無碼', genre: '/videos/tag/uncensored.html', sort: '' },
+  { type_id: 7, type_name: 'H動畫', genre: '/videos/tag/cartoon.html', sort: '' },
+  { type_id: 8, type_name: '自拍', genre: '/videos/tag/zipai.html', sort: '' },
+  { type_id: 9, type_name: '中文字幕', genre: '/videos/tag/caption.html', sort: '' },
+  { type_id: 10, type_name: '学生', genre: '/videos/tag/student.html', sort: '' },
+  { type_id: 11, type_name: '制服誘惑', genre: '/videos/tag/uniform.html', sort: '' },
+  { type_id: 12, type_name: 'Cosplay', genre: '/videos/tag/cosplay.html', sort: '' },
+  { type_id: 13, type_name: '無套中出', genre: '/videos/tag/injection.html', sort: '' },
+];
+
+const catById = (t) => CATS.find((c) => String(c.type_id) === String(t));
+
+const UA_LIST = [
+  process.env.AQDLT_UA || '',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+].filter(Boolean);
+
+function headersFor(ua, base) {
+  return {
+    'User-Agent': ua,
+    Referer: base + '/',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+}
+
+function clean(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * sojson 还原：在 Node vm 里跑站点自己的解码桩（document.write 劫持取结果）。
+ * 非混淆页原样返回；解码失败也原样返回（parse 阶段再尽力而为）。
+ */
+function deobfuscate(pageHtml) {
+  const marker = 'var html = ';
+  const start = pageHtml.indexOf(marker);
+  if (start === -1) return pageHtml;
+  let i = start + marker.length;
+  while (i < pageHtml.length && /\s/.test(pageHtml[i])) i++;
+  const quote = pageHtml[i];
+  if (quote !== "'" && quote !== '"') return pageHtml;
+  i++;
+  let raw = '';
+  while (i < pageHtml.length) {
+    const ch = pageHtml[i];
+    if (ch === '\\') {
+      raw += ch + (pageHtml[i + 1] || '');
+      i += 2;
+      continue;
+    }
+    if (ch === quote) break;
+    raw += ch;
+    i++;
+  }
+  if (!raw) return pageHtml;
+  const varCode = `var html = ${quote}${raw}${quote};`;
+  const scripts = [...pageHtml.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  const decoder = scripts.filter((s) => /sojson|fromCharCode|reverse/.test(s)).pop();
+  if (!decoder) return pageHtml;
+  try {
+    const noopEl = { parentNode: { removeChild() {} } };
+    const sandbox = {
+      document: { write: (s) => sandbox.__out.push(String(s)), getElementById: () => noopEl },
+      window: {},
+      location: {},
+      navigator: {},
+      console: { log() {} },
+      __out: [],
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(`${varCode}\n${decoder}`, sandbox, { timeout: 5000 });
+    const out = sandbox.__out.join('');
+    // 解码成功：产出与原文不同且含 HTML 标签；否则回退原文
+    if (out && out !== pageHtml && /<[a-z][^>]*>/i.test(out)) return out;
+  } catch {
+    /* 掉回原文 */
+  }
+  return pageHtml;
+}
+
+function buildSearchUrl({ genre = '', sort = '', query = '', pg = 1 }, base) {
+  void sort;
+  if (query) throw new Error('aqdlt search not supported');
+  let path = genre || '';
+  if (!path) {
+    if (pg <= 1) return `${base}/`;
+    return `${base}/videos/index/${pg}.html`;
+  }
+  if (pg <= 1) return `${base}${path}`;
+  return `${base}${path.replace(/\.html$/, '')}/${pg}.html`;
+}
+
+// 详情链接：/videos/play/<数字id>.html；绝对/相对都认
+function normVid(href, base) {
+  if (!href || href.startsWith('#') || href.startsWith('javascript:')) return '';
+  let p = '';
+  if (href.startsWith('/')) p = href;
+  else {
+    try {
+      const u = new URL(href, base || 'https://vip.aqdm888.com:20844');
+      if (!/aqdm\d+\.com|aqdlt|aqdsp/.test(u.hostname)) return '';
+      p = u.pathname;
+    } catch {
+      return '';
+    }
+    if (!p) return '';
+  }
+  const m = p.split('#')[0].split('?')[0].match(/^\/videos\/play\/(\d+)\.html$/i);
+  return m ? m[1] : '';
+}
+
+function pickPic($, anchor) {
+  let pic = '';
+  anchor.find('img').each((_, img) => {
+    if (pic) return;
+    const src = $(img).attr('src') || $(img).attr('data-src') || $(img).attr('data-original') || '';
+    if (!src || /icon|avatar|logo|placeholder|ad/i.test(src)) return;
+    // 优先真实封面（thumbs/cover），跳过占位图
+    if (/thumbs\/|cover/i.test(src)) pic = src;
+  });
+  if (!pic) {
+    anchor.find('img').each((_, img) => {
+      if (pic) return;
+      const src = $(img).attr('src') || $(img).attr('data-src') || '';
+      if (src && !/icon|avatar|logo/i.test(src)) pic = src;
+    });
+  }
+  if (pic && pic.startsWith('//')) pic = 'https:' + pic;
+  return pic;
+}
+
+function parseList(html) {
+  const $ = cheerio.load(deobfuscate(html));
+  const videos = [];
+  const seen = new Set();
+  $('a[href]').each((_, a) => {
+    const vid = normVid($(a).attr('href') || '', '');
+    if (!vid || seen.has(vid)) return;
+    const inner = $(a);
+    let title = clean(inner.attr('title') || '');
+    if (!title) title = clean(inner.text()).slice(0, 120);
+    if (!title) return;
+    seen.add(vid);
+    videos.push({ vid, title, pic: pickPic($, inner) });
+  });
+  return videos;
+}
+
+function parsePageCount(html, pg) {
+  const text = deobfuscate(html);
+  let max = pg;
+  const m = text.match(/共\s*(\d+)\s*页/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (!isNaN(n) && n > max) max = Math.min(n, 500);
+  }
+  const pats = [/\/videos\/index\/(\d+)\.html/g, /[?&]page=(\d+)/g];
+  for (const re of pats) {
+    let mm;
+    while ((mm = re.exec(text))) {
+      const n = parseInt(mm[1], 10);
+      if (!isNaN(n) && n > max && n < 10000) max = n;
+    }
+  }
+  return max;
+}
+
+const SURRIT_RE = /https?:\/\/[^\s"'<>]*surrit[^\s"'<>]*?\.m3u8[^\s"'<>]*/i;
+const ANY_M3U8_RE = /https?:\/\/[^\s"'<>]*?\.m3u8[^\s"'<>]*/i;
+
+function parseDetail(html, vid) {
+  const $ = cheerio.load(deobfuscate(html));
+  const og = (prop) => $(`meta[property="og:${prop}"]`).attr('content') || '';
+  let title = clean($('h1').first().text()).slice(0, 120);
+  if (!title) title = clean(og('title').replace(/\s*[-–|]\s*爱情岛.*$/i, ''));
+  if (!title) title = `aqdlt ${vid}`;
+  const picRaw = og('image') || '';
+  const desc = clean(og('description'));
+
+  let actor = '';
+  const tagLinks = [];
+  let genreName = '';
+  $('a[href*="/videos/category/"], a[href*="/videos/tag/"]').each((_, a) => {
+    const t = clean($(a).text());
+    if (!t || t.length > 20 || tagLinks.includes(t)) return;
+    tagLinks.push(t);
+    if (!genreName && /\/videos\/category\//.test($(a).attr('href') || '')) genreName = t;
+  });
+
+  const text = $.html();
+  const lit = text.match(SURRIT_RE) || text.match(ANY_M3U8_RE);
+  const m3u8 = lit ? lit[0].replace(/[\\,;)\]]+$/, '') : '';
+  const sources = m3u8 ? [{ size: 0, src: m3u8 }] : [];
+  const episodes = [{ name: '正片', vid: String(vid), ...(m3u8 ? { url: m3u8 } : {}) }];
+
+  return { title, pic: picRaw, desc, actor, genreName, sources, episodes, tags: tagLinks.slice(0, 30) };
+}
+
+module.exports = {
+  key: 'aqdlt',
+  displayName: '爱情岛',
+  baseEnv: 'AQDLT_BASE',
+  defaultBase: 'https://vip.aqdm888.com:20844',
+  publicBaseEnv: 'PUBLIC_BASE_AQDLT',
+  uaEnv: 'AQDLT_UA',
+  passthrough: true, // 原生 m3u8 直传：列表不拼 /h/，详情用自带 url
+  CATS,
+  catById,
+  UA_LIST,
+  headersFor,
+  buildSearchUrl,
+  detailUrl: (vid, base) => `${base}/videos/play/${vid}.html`,
+  parseList,
+  parsePageCount,
+  parseDetail,
+};

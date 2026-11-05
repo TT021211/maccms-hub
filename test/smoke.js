@@ -191,6 +191,50 @@ async function main() {
   assert.strictEqual(buildRelayUrl('https://missav.ai/'), null);
   if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
 
+  // 8. aqdlt 适配器（sojson 还原 + 原生 m3u8 直传）
+  const aqdlt = require('../src/sites/aqdlt');
+  assert.strictEqual(aqdlt.key, 'aqdlt');
+  assert.strictEqual(aqdlt.passthrough, true);
+  assert.strictEqual(aqdlt.CATS.length, 13);
+  assert.strictEqual(
+    aqdlt.detailUrl('50419', 'https://vip.aqdm888.com:20844'),
+    'https://vip.aqdm888.com:20844/videos/play/50419.html'
+  );
+  assert.strictEqual(aqdlt.buildSearchUrl({ pg: 1 }, 'https://vip.aqdm888.com:20844'), 'https://vip.aqdm888.com:20844/');
+  assert.ok(aqdlt.buildSearchUrl({ pg: 2 }, 'https://vip.aqdm888.com:20844').endsWith('/videos/index/2.html'));
+  assert.ok(
+    aqdlt.buildSearchUrl({ genre: '/videos/category/cn.html', pg: 1 }, 'https://vip.aqdm888.com:20844').endsWith('/videos/category/cn.html')
+  );
+  assert.throws(() => aqdlt.buildSearchUrl({ query: 'test', pg: 1 }, 'https://vip.aqdm888.com:20844'), /not supported/);
+  assert.strictEqual(aqdlt.parsePageCount('第 1 页 / 共 2794 页', 1), 500);
+
+  // sojson 载荷：反转字符串 + 解码桩 document.write 还原
+  const aqInner =
+    '<div><a href="/videos/play/50419.html" title="糖心Vlog 标题"><img src="https://img2.fuqiu1688.com:606/thumbs/050/50419_cover_480x270.jpg"></a>' +
+    '<a href="/videos/category/cn.html">中國大陸</a></div>';
+  const aqPayload = aqInner.split('').reverse().join('');
+  const aqStub = "document.write(decodeURIComponent(html.split('').reverse().join('')));";
+  const aqPage = `<html><body><script>var html = '${aqPayload}';</script><script>${aqStub}</script></body></html>`;
+  const aqItems = aqdlt.parseList(aqPage);
+  assert.strictEqual(aqItems.length, 1, JSON.stringify(aqItems));
+  assert.strictEqual(aqItems[0].vid, '50419');
+  assert.strictEqual(aqItems[0].title, '糖心Vlog 标题');
+  assert.ok(aqItems[0].pic.includes('50419_cover_480x270.jpg'), aqItems[0].pic);
+
+  const aqDetailInner =
+    '<html><head><meta property="og:title" content="糖心Vlog 标题"></head><body><h1>糖心Vlog 标题</h1>' +
+    '<a href="/videos/category/cn.html">中國大陸</a>' +
+    '<a href="/videos/tag/beauty-breast.html">美乳</a>' +
+    '<script>var player="https://cdn.aqd-tv.com/video/594c5149/playlist/594c5149.m3u8";</script></body></html>';
+  const aqDetailPage =
+    `<html><body><script>var html = '${aqDetailInner.split('').reverse().join('')}';</script><script>${aqStub}</script></body></html>`;
+  const aqD = aqdlt.parseDetail(aqDetailPage, '50419');
+  assert.strictEqual(aqD.title, '糖心Vlog 标题');
+  assert.strictEqual(aqD.genreName, '中國大陸');
+  assert.deepStrictEqual(aqD.tags, ['中國大陸', '美乳']);
+  assert.strictEqual(aqD.sources[0].src, 'https://cdn.aqd-tv.com/video/594c5149/playlist/594c5149.m3u8');
+  assert.strictEqual(aqD.episodes[0].url, 'https://cdn.aqd-tv.com/video/594c5149/playlist/594c5149.m3u8');
+
   console.log('smoke OK: adapter + framework routes');
 }
 
