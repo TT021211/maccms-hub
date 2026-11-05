@@ -92,6 +92,11 @@ async function main() {
     const badAcPrefixed = await get('/hanime1/api.php/provide/vod/?ac=foo');
     assert.strictEqual(badAcPrefixed.status, 400);
 
+    // 不支持搜索的站：返回 502 JSON，而不是掀翻进程
+    const noSearch = await get('/aqdlt/api.php/provide/vod/?ac=list&wd=test');
+    assert.strictEqual(noSearch.status, 502);
+    assert.strictEqual(noSearch.json.code, 0);
+
     const missingIds = await get('/api.php/provide/vod/?ac=detail');
     assert.strictEqual(missingIds.status, 400);
 

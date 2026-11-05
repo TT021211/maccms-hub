@@ -536,13 +536,28 @@ function dispatchWith(siteName, req, res) {
       if (len !== undefined) console.log(`  -> ${len} items in ${Date.now() - t0}ms`);
     } catch {}
   });
-  if (ac === 'detail' || (q.ids && !ac)) return handleDetail(site, req, res);
-  if (ac === 'list' || ac === '' || ac === 'videolist') {
-    // ?ids= 优先走详情 (MacCMS 采集器行为)
-    if (q.ids) return handleDetail(site, req, res);
-    return handleList(site, req, res);
+  // 单个源报错绝不能掀翻整个网关进程：同步 throw（如 aqdlt 拒搜）直接 502；
+  // 异步 handle 统一挂 catch（Express 4 不收 async  rejection，不接就变 unhandledRejection 崩进程）
+  let p;
+  try {
+    if (ac === 'detail' || (q.ids && !ac)) p = handleDetail(site, req, res);
+    else if (ac === 'list' || ac === '' || ac === 'videolist') {
+      // ?ids= 优先走详情 (MacCMS 采集器行为)
+      if (q.ids) p = handleDetail(site, req, res);
+      else p = handleList(site, req, res);
+    } else {
+      return res.status(400).json({ code: 0, msg: 'unknown ac, use ac=list|detail' });
+    }
+  } catch (e) {
+    console.error(`[hub][${site.key}] dispatch sync failed: ${(e && e.message) || e}`);
+    if (!res.headersSent) return res.status(502).json({ code: 0, msg: '上游抓取失败: ' + ((e && e.message) || e) });
+    return;
   }
-  return res.status(400).json({ code: 0, msg: 'unknown ac, use ac=list|detail' });
+  Promise.resolve(p).catch((e) => {
+    console.error(`[hub][${site.key}] dispatch async failed: ${(e && e.message) || e}`);
+    if (!res.headersSent) res.status(502).json({ code: 0, msg: '上游抓取失败: ' + ((e && e.message) || e) });
+  });
+  return p;
 }
 
 // MacCMS 标准路径 + 兼容路径 (GET/POST 都接, 部分聚合端用 POST 搜索)
