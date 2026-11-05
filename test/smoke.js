@@ -10,7 +10,7 @@ async function main() {
 
   // 1. 适配器元信息
   assert.strictEqual(hanime1.key, 'hanime1');
-  assert.strictEqual(hanime1.CATS.length, 13);
+  assert.ok(hanime1.CATS.length >= 13, `hanime1 CATS=${hanime1.CATS.length}`);
   assert.strictEqual(hanime1.catById(4).type_name, '裏番');
   assert.strictEqual(hanime1.catById('4').type_name, '裏番');
   assert.ok(Array.isArray(tmpl.CATS), '模板也应可被 require（仅做结构校验）');
@@ -200,7 +200,11 @@ async function main() {
   const aqdlt = require('../src/sites/aqdlt');
   assert.strictEqual(aqdlt.key, 'aqdlt');
   assert.strictEqual(aqdlt.passthrough, true);
-  assert.strictEqual(aqdlt.CATS.length, 13);
+  // 导航同步后可能已并入动态分类（在线时 13+；离线回退 13）
+  assert.ok(aqdlt.CATS.length >= 13, `aqdlt CATS=${aqdlt.CATS.length}`);
+  if (aqdlt.CATS.length > 13) {
+    assert.ok(aqdlt.catById('cat-hk'), '应含导航分类 cat-hk');
+  }
   assert.strictEqual(
     aqdlt.detailUrl('50419', 'https://vip.aqdm888.com:20844'),
     'https://vip.aqdm888.com:20844/videos/play/50419.html'
@@ -246,7 +250,8 @@ async function main() {
   const hohoj = require('../src/sites/hohoj');
   assert.strictEqual(hohoj.key, 'hohoj');
   assert.strictEqual(hohoj.passthrough, true);
-  assert.strictEqual(hohoj.CATS.length, 13);
+  // 导航同步后可能已并入动态分类（在线时 13+；离线回退 13）
+  assert.ok(hohoj.CATS.length >= 13, `hohoj CATS=${hohoj.CATS.length}`);
   assert.strictEqual(
     hohoj.detailUrl('7557', 'https://hohoj.tv'),
     'https://hohoj.tv/video?id=7557'

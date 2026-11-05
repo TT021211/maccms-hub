@@ -11,19 +11,19 @@
 const cheerio = require('cheerio');
 
 const CATS = [
-  { type_id: 1, type_name: '最新更新', genre: '', sort: '' },
-  { type_id: 2, type_name: '無碼', genre: '/search?type=uncensored', sort: '' },
-  { type_id: 3, type_name: '中文字幕', genre: '/search?type=chinese', sort: '' },
-  { type_id: 4, type_name: '歐美', genre: '/search?type=europe', sort: '' },
-  { type_id: 5, type_name: '有碼', genre: '/search?type=censored', sort: '' },
-  { type_id: 6, type_name: '制服誘惑', genre: '/main_ctg?id=4', sort: '' },
-  { type_id: 7, type_name: '巨乳美乳', genre: '/main_ctg?id=9', sort: '' },
-  { type_id: 8, type_name: '角色劇情', genre: '/main_ctg?id=6', sort: '' },
-  { type_id: 9, type_name: '出軌', genre: '/main_ctg?id=7', sort: '' },
-  { type_id: 10, type_name: '亂倫', genre: '/main_ctg?id=8', sort: '' },
-  { type_id: 11, type_name: '多P群交', genre: '/main_ctg?id=5', sort: '' },
-  { type_id: 12, type_name: '主奴調教', genre: '/main_ctg?id=3', sort: '' },
-  { type_id: 13, type_name: '絲襪美腿', genre: '/main_ctg?id=1', sort: '' },
+  { type_id: 1, type_name: '最新更新', genre: '', sort: '', group: '精選' },
+  { type_id: 2, type_name: '無碼', genre: '/search?type=uncensored', sort: '', group: '類型' },
+  { type_id: 3, type_name: '中文字幕', genre: '/search?type=chinese', sort: '', group: '類型' },
+  { type_id: 4, type_name: '歐美', genre: '/search?type=europe', sort: '', group: '類型' },
+  { type_id: 5, type_name: '有碼', genre: '/search?type=censored', sort: '', group: '類型' },
+  { type_id: 6, type_name: '制服誘惑', genre: '/main_ctg?id=4', sort: '', group: '主題' },
+  { type_id: 7, type_name: '巨乳美乳', genre: '/main_ctg?id=9', sort: '', group: '主題' },
+  { type_id: 8, type_name: '角色劇情', genre: '/main_ctg?id=6', sort: '', group: '主題' },
+  { type_id: 9, type_name: '出軌', genre: '/main_ctg?id=7', sort: '', group: '主題' },
+  { type_id: 10, type_name: '亂倫', genre: '/main_ctg?id=8', sort: '', group: '主題' },
+  { type_id: 11, type_name: '多P群交', genre: '/main_ctg?id=5', sort: '', group: '主題' },
+  { type_id: 12, type_name: '主奴調教', genre: '/main_ctg?id=3', sort: '', group: '主題' },
+  { type_id: 13, type_name: '絲襪美腿', genre: '/main_ctg?id=1', sort: '', group: '主題' },
 ];
 
 const catById = (t) => CATS.find((c) => String(c.type_id) === String(t));
@@ -206,11 +206,11 @@ async function ensureNavCats(base, fetchFn) {
     if (!nav) return;
     const havePaths = new Set(CATS.map((c) => c.genre));
     const seen = new Set();
-    const add = (type_id, type_name, genre) => {
+    const add = (type_id, type_name, genre, group) => {
       if (!genre || havePaths.has(genre) || seen.has(genre)) return;
       seen.add(genre);
       havePaths.add(genre);
-      CATS.push({ type_id, type_name, genre, sort: '' });
+      CATS.push({ type_id, type_name, genre, sort: '', group });
     };
     const re = /<a[^>]+href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
     let m;
@@ -220,15 +220,114 @@ async function ensureNavCats(base, fetchFn) {
       if (!name || name.length > 20) continue;
       let mm = href.match(/^\/main_ctg\?id=(\d+)/i);
       if (mm) {
-        add(1000 + parseInt(mm[1], 10), name, `/main_ctg?id=${mm[1]}`);
+        add(1000 + parseInt(mm[1], 10), name, `/main_ctg?id=${mm[1]}`, '主題');
         continue;
       }
       mm = href.match(/^\/ctg\?id=(\d+)/i);
-      if (mm) add(2000 + parseInt(mm[1], 10), name, `/ctg?id=${mm[1]}`);
+      if (mm) add(2000 + parseInt(mm[1], 10), name, `/ctg?id=${mm[1]}`, '標籤');
     }
     navCatsLoadedAt = now;
   } catch {
     // 导航拉取失败不影响列表：继续用内置 13 个
+  }
+}
+
+// 女优墙 /all_models（order=popular|views，p 翻页）与女优作品页 /model?id=N（p 翻页，
+// 与列表页同一套 video-item 结构 + changePage 分页，可复用 parseList/parsePageCount）。
+function parseModels(html) {
+  const $ = cheerio.load(html);
+  const models = [];
+  const seen = new Set();
+  $('.model').each((_, el) => {
+    const a = $(el).find('a[href*="/model?id="]').first();
+    const m = (a.attr('href') || '').match(/[?&]id=(\d+)/);
+    if (!m || seen.has(m[1])) return;
+    seen.add(m[1]);
+    const pic = a.find('img').first().attr('src') || '';
+    const name = clean($(el).find('.model-name').first().text()) || clean(a.text());
+    if (!name) return;
+    models.push({ mid: m[1], name, pic: pic.startsWith('//') ? 'https:' + pic : pic });
+  });
+  return models;
+}
+
+function buildModelsUrl({ order = 'popular', pg = 1 }, base) {
+  let url = `${base}/all_models?order=${order === 'views' ? 'views' : 'popular'}`;
+  if (pg > 1) url += `&p=${pg}`;
+  return url;
+}
+
+function buildModelUrl({ mid, pg = 1 }, base) {
+  let url = `${base}/model?id=${encodeURIComponent(mid)}`;
+  if (pg > 1) url += `&p=${pg}`;
+  return url;
+}
+
+// 站内直连抓取（简化版 UA 轮换：hohoj 无 CF，取前 3 个 UA 重试足够）
+async function fetchModelHtml(site, url) {
+  const uas = (site.def.UA_LIST || []).filter(Boolean);
+  const list = uas.length ? uas : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'];
+  let lastErr = null;
+  for (const ua of list.slice(0, 3)) {
+    try {
+      const res = await fetch(url, { headers: site.def.headersFor(ua, site.base), signal: AbortSignal.timeout(25000) });
+      if (!res.ok) throw new Error(`upstream http ${res.status} for ${url}`);
+      return await res.text();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('fetch failed for ' + url);
+}
+
+function fmtTime() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+// ac=models / ac=model-videos：走 MacCMS 信封，女优本身映射成 vod 条目
+//（vod_id=`model-<mid>`，MoonTVPlus 侧以此外缀识别走 model-videos 通道）。
+async function handleModels(site, req, res, ac) {
+  const q = req.query;
+  const pg = Math.max(1, parseInt(q.pg || q.page || q.p || '1', 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(q.limit || q.pagesize || '20', 10) || 20));
+  try {
+    if (ac === 'models') {
+      const order = q.order === 'views' ? 'views' : 'popular';
+      const html = await fetchModelHtml(site, buildModelsUrl({ order, pg }, site.base));
+      const models = parseModels(html);
+      const pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
+      const list = models.slice(0, limit).map((v) => ({
+        vod_id: `model-${v.mid}`,
+        vod_name: v.name,
+        type_id: 0,
+        type_name: '女优',
+        vod_pic: v.pic,
+        vod_remarks: '',
+        vod_time: fmtTime(),
+        vod_play_from: site.def.displayName,
+        vod_play_url: undefined,
+      }));
+      return res.json({ code: 1, msg: '数据列表', page: pg, pagecount, limit, total: pagecount * limit, list });
+    }
+    const mid = String(q.mid || '').replace(/^model-/, '');
+    if (!mid) return res.status(400).json({ code: 0, msg: 'missing ?mid=' });
+    const html = await fetchModelHtml(site, buildModelUrl({ mid, pg }, site.base));
+    const items = site.def.parseList(html);
+    const pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
+    const list = items.slice(0, limit).map((v) => ({
+      vod_id: v.vid,
+      vod_name: v.title,
+      type_id: 0,
+      type_name: '女优作品',
+      vod_pic: v.pic,
+      vod_remarks: '',
+      vod_time: fmtTime(),
+      vod_play_from: site.def.displayName,
+      vod_play_url: undefined,
+    }));
+    return res.json({ code: 1, msg: '数据列表', page: pg, pagecount, limit, total: pagecount * limit, list });
+  } catch (e) {
+    return res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
   }
 }
 
@@ -246,6 +345,10 @@ module.exports = {
   headersFor,
   buildSearchUrl,
   ensureNavCats,
+  parseModels,
+  buildModelsUrl,
+  buildModelUrl,
+  handleModels,
   detailUrl,
   expandDetailUrl,
   parseList,

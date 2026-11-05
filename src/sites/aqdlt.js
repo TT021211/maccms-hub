@@ -13,19 +13,19 @@ const cheerio = require('cheerio');
 const vm = require('vm');
 
 const CATS = [
-  { type_id: 1, type_name: '最新更新', genre: '', sort: '' },
-  { type_id: 2, type_name: '中國大陸', genre: '/videos/category/cn.html', sort: '' },
-  { type_id: 3, type_name: '歐美', genre: '/videos/category/west.html', sort: '' },
-  { type_id: 4, type_name: '日本', genre: '/videos/category/jp.html', sort: '' },
-  { type_id: 5, type_name: '韓國', genre: '/videos/category/kr.html', sort: '' },
-  { type_id: 6, type_name: '無碼', genre: '/videos/tag/uncensored.html', sort: '' },
-  { type_id: 7, type_name: 'H動畫', genre: '/videos/tag/cartoon.html', sort: '' },
-  { type_id: 8, type_name: '自拍', genre: '/videos/tag/zipai.html', sort: '' },
-  { type_id: 9, type_name: '中文字幕', genre: '/videos/tag/caption.html', sort: '' },
-  { type_id: 10, type_name: '学生', genre: '/videos/tag/student.html', sort: '' },
-  { type_id: 11, type_name: '制服誘惑', genre: '/videos/tag/uniform.html', sort: '' },
-  { type_id: 12, type_name: 'Cosplay', genre: '/videos/tag/cosplay.html', sort: '' },
-  { type_id: 13, type_name: '無套中出', genre: '/videos/tag/injection.html', sort: '' },
+  { type_id: 1, type_name: '最新更新', genre: '', sort: '', group: '精選' },
+  { type_id: 2, type_name: '中國大陸', genre: '/videos/category/cn.html', sort: '', group: '地區' },
+  { type_id: 3, type_name: '歐美', genre: '/videos/category/west.html', sort: '', group: '地區' },
+  { type_id: 4, type_name: '日本', genre: '/videos/category/jp.html', sort: '', group: '地區' },
+  { type_id: 5, type_name: '韓國', genre: '/videos/category/kr.html', sort: '', group: '地區' },
+  { type_id: 6, type_name: '無碼', genre: '/videos/tag/uncensored.html', sort: '', group: '標籤' },
+  { type_id: 7, type_name: 'H動畫', genre: '/videos/tag/cartoon.html', sort: '', group: '標籤' },
+  { type_id: 8, type_name: '自拍', genre: '/videos/tag/zipai.html', sort: '', group: '標籤' },
+  { type_id: 9, type_name: '中文字幕', genre: '/videos/tag/caption.html', sort: '', group: '標籤' },
+  { type_id: 10, type_name: '学生', genre: '/videos/tag/student.html', sort: '', group: '標籤' },
+  { type_id: 11, type_name: '制服誘惑', genre: '/videos/tag/uniform.html', sort: '', group: '標籤' },
+  { type_id: 12, type_name: 'Cosplay', genre: '/videos/tag/cosplay.html', sort: '', group: '標籤' },
+  { type_id: 13, type_name: '無套中出', genre: '/videos/tag/injection.html', sort: '', group: '標籤' },
 ];
 
 const catById = (t) => CATS.find((c) => String(c.type_id) === String(t));
@@ -223,6 +223,46 @@ function parseDetail(html, vid) {
   return { title, pic: picRaw, desc, actor, genreName, sources, episodes, tags: tagLinks.slice(0, 30) };
 }
 
+// 首页导航是分类+标签库（约 7 个 /videos/category/ + 约 68 个 /videos/tag/）。
+// 内置 13 个只覆盖一部分，这里把导航全量并进来（24 小时缓存），按真实站点类别同步。
+// 动态 id 用 `cat-<slug>` / `tag-<slug>` 字符串（框架层全走 String 比对，直通）。
+// 与内置重复 path 的跳过。失败回退内置。
+let navCatsLoadedAt = 0;
+const NAV_TTL_MS = 24 * 3600 * 1000;
+
+async function ensureNavCats(base, fetchFn) {
+  const now = Date.now();
+  if (now - navCatsLoadedAt < NAV_TTL_MS && CATS.length > 13) return;
+  try {
+    const url = (base || 'https://vip.aqdm888.com:20844').replace(/\/$/, '') + '/';
+    const res = await fetchFn(url);
+    if (!res.ok) return;
+    const html = deobfuscate(await res.text());
+    const $ = cheerio.load(html);
+    const havePaths = new Set(CATS.map((c) => c.genre));
+    const add = (type_id, type_name, genre, group) => {
+      if (!genre || !type_name || havePaths.has(genre)) return;
+      havePaths.add(genre);
+      CATS.push({ type_id, type_name, genre, sort: '', group });
+    };
+    $('a[href^="/videos/category/"], a[href^="/videos/tag/"]').each((_, a) => {
+      const href = ($(a).attr('href') || '').split('?')[0];
+      const name = clean($(a).text());
+      if (!name || name.length > 20) return;
+      let m = href.match(/^\/videos\/category\/([a-z0-9_-]+)\.html$/i);
+      if (m) {
+        add(`cat-${m[1].toLowerCase()}`, name, `/videos/category/${m[1]}.html`, '地區');
+        return;
+      }
+      m = href.match(/^\/videos\/tag\/([a-z0-9_-]+)\.html$/i);
+      if (m) add(`tag-${m[1].toLowerCase()}`, name, `/videos/tag/${m[1]}.html`, '標籤');
+    });
+    navCatsLoadedAt = now;
+  } catch {
+    // 导航拉取/解析失败不影响列表：继续用内置 13 个
+  }
+}
+
 module.exports = {
   key: 'aqdlt',
   displayName: '爱情岛',
@@ -236,6 +276,7 @@ module.exports = {
   UA_LIST,
   headersFor,
   buildSearchUrl,
+  ensureNavCats,
   detailUrl: (vid, base) => `${base}/videos/play/${vid}.html`,
   parseList,
   parsePageCount,

@@ -436,7 +436,7 @@ async function handleList(site, req, res) {
       limit,
       total,
       list,
-      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name })),
+      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name, ...(c.group ? { group: c.group } : {}) })),
     });
   } catch (e) {
     res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
@@ -523,7 +523,7 @@ async function handleDetail(site, req, res) {
       limit: String(results.length),
       total: results.length,
       list: results,
-      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name })),
+      class: site.def.CATS.map((c) => ({ type_id: c.type_id, type_name: c.type_name, ...(c.group ? { group: c.group } : {}) })),
     });
   } catch (e) {
     res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
@@ -553,6 +553,12 @@ function dispatchWith(siteName, req, res) {
       // ?ids= 优先走详情 (MacCMS 采集器行为)
       if (q.ids) p = handleDetail(site, req, res);
       else p = handleList(site, req, res);
+    } else if (
+      (ac === 'models' || ac === 'model-videos') &&
+      typeof site.def.handleModels === 'function'
+    ) {
+      // 站点扩展位（如 hohoj 女优墙/女优作品），走 MacCMS 信封
+      p = site.def.handleModels(site, req, res, ac);
     } else {
       return res.status(400).json({ code: 0, msg: 'unknown ac, use ac=list|detail' });
     }

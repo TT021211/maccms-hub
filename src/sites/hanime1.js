@@ -8,19 +8,19 @@
 const cheerio = require('cheerio');
 
 const CATS = [
-  { type_id: 1, type_name: '最新里番', genre: '裏番', sort: '最新上市' },
-  { type_id: 2, type_name: '最新上市', genre: '', sort: '最新上市' },
-  { type_id: 3, type_name: '最新上傳', genre: '', sort: '最新上傳' },
-  { type_id: 4, type_name: '裏番', genre: '裏番', sort: '' },
-  { type_id: 5, type_name: '泡麵番', genre: '泡麵番', sort: '' },
-  { type_id: 6, type_name: 'Motion Anime', genre: 'Motion Anime', sort: '' },
-  { type_id: 7, type_name: '3DCG', genre: '3DCG', sort: '' },
-  { type_id: 8, type_name: '2.5D', genre: '2.5D', sort: '' },
-  { type_id: 9, type_name: '2D動畫', genre: '2D動畫', sort: '' },
-  { type_id: 10, type_name: 'AI生成', genre: 'AI生成', sort: '' },
-  { type_id: 11, type_name: 'MMD', genre: 'MMD', sort: '' },
-  { type_id: 12, type_name: 'Cosplay', genre: 'Cosplay', sort: '' },
-  { type_id: 13, type_name: '新番預告', genre: '新番預告', sort: '' },
+  { type_id: 1, type_name: '最新里番', genre: '裏番', sort: '最新上市', group: '分类' },
+  { type_id: 2, type_name: '最新上市', genre: '', sort: '最新上市', group: '分类' },
+  { type_id: 3, type_name: '最新上傳', genre: '', sort: '最新上傳', group: '分类' },
+  { type_id: 4, type_name: '裏番', genre: '裏番', sort: '', group: '分类' },
+  { type_id: 5, type_name: '泡麵番', genre: '泡麵番', sort: '', group: '分类' },
+  { type_id: 6, type_name: 'Motion Anime', genre: 'Motion Anime', sort: '', group: '分类' },
+  { type_id: 7, type_name: '3DCG', genre: '3DCG', sort: '', group: '分类' },
+  { type_id: 8, type_name: '2.5D', genre: '2.5D', sort: '', group: '分类' },
+  { type_id: 9, type_name: '2D動畫', genre: '2D動畫', sort: '', group: '分类' },
+  { type_id: 10, type_name: 'AI生成', genre: 'AI生成', sort: '', group: '分类' },
+  { type_id: 11, type_name: 'MMD', genre: 'MMD', sort: '', group: '分类' },
+  { type_id: 12, type_name: 'Cosplay', genre: 'Cosplay', sort: '', group: '分类' },
+  { type_id: 13, type_name: '新番預告', genre: '新番預告', sort: '', group: '分类' },
 ];
 
 const catById = (t) => CATS.find((c) => String(c.type_id) === String(t));
@@ -208,6 +208,61 @@ function parseDetail(html, vid) {
   return { title, pic: picRaw, desc, actor, genreName, sources, episodes: eps, tags: tags.slice(0, 30) };
 }
 
+// 站内 genre 标签库：从首页与搜索页抓 `search?genre=` 链接并进来（24 小时缓存），
+// 按真实站点类别同步。type_id 直接用 genre 名（框架层全走 String 比对）。
+// 注意：部分网络（如本地直连）会被站方 CF 拦截，全灭时静默回退内置 13 个，
+// 线上 VPS 出口一般能过。与内置重复 genre 的跳过。
+let navCatsLoadedAt = 0;
+const NAV_TTL_MS = 24 * 3600 * 1000;
+
+async function ensureNavCats(base, fetchFn) {
+  const now = Date.now();
+  if (now - navCatsLoadedAt < NAV_TTL_MS && CATS.length > 13) return;
+  try {
+    const origin = (base || 'https://hanime1.me').replace(/\/$/, '');
+    const haveGenres = new Set(CATS.map((c) => c.genre));
+    const found = new Map();
+    for (const url of [origin + '/', origin + '/search?query=']) {
+      let html = '';
+      for (const ua of UA_LIST) {
+        try {
+          const res = await fetchFn(url, { headers: headersFor(ua, origin) });
+          if (res.status === 403 || res.status === 503) continue;
+          if (!res.ok) break;
+          html = await res.text();
+          break;
+        } catch {
+          /* 换 UA */
+        }
+      }
+      if (!html) continue;
+      const $ = cheerio.load(html);
+      $('a[href*="genre="]').each((_, a) => {
+        const href = $(a).attr('href') || '';
+        const m = href.match(/genre=([^"&]+)/i);
+        if (!m) return;
+        let genre = '';
+        try {
+          genre = decodeURIComponent(m[1]);
+        } catch {
+          return;
+        }
+        const name = clean($(a).text()) || genre;
+        if (!genre || genre.length > 20 || !name || name.length > 20) return;
+        if (!found.has(genre)) found.set(genre, name);
+      });
+    }
+    for (const [genre, name] of found) {
+      if (haveGenres.has(genre)) continue;
+      haveGenres.add(genre);
+      CATS.push({ type_id: genre, type_name: name, genre, sort: '', group: '标签' });
+    }
+    navCatsLoadedAt = now;
+  } catch {
+    // 导航拉取/解析失败不影响列表：继续用内置 13 个
+  }
+}
+
 module.exports = {
   key: 'hanime1',
   displayName: 'Hanime1',
@@ -220,6 +275,7 @@ module.exports = {
   UA_LIST,
   headersFor,
   buildSearchUrl,
+  ensureNavCats,
   parseList,
   parsePageCount,
   parseDetail,
