@@ -132,40 +132,38 @@ function normVid(href, base) {
 }
 
 function pickPic($, anchor) {
-  let pic = '';
+  const urls = [];
   anchor.find('img').each((_, img) => {
-    if (pic) return;
-    const src = $(img).attr('src') || $(img).attr('data-src') || $(img).attr('data-original') || '';
-    if (!src || /icon|avatar|logo|placeholder|ad/i.test(src)) return;
-    // 优先真实封面（thumbs/cover），跳过占位图
-    if (/thumbs\/|cover/i.test(src)) pic = src;
+    // data-src/data-original 优先：真实封面常在懒加载属性里，src 可能是占位图
+    for (const a of ['data-src', 'data-original', 'src']) {
+      const s = $(img).attr(a) || '';
+      if (!s || /icon|avatar|logo/i.test(s)) continue;
+      urls.push(s.startsWith('//') ? 'https:' + s : s);
+    }
   });
-  if (!pic) {
-    anchor.find('img').each((_, img) => {
-      if (pic) return;
-      const src = $(img).attr('src') || $(img).attr('data-src') || '';
-      if (src && !/icon|avatar|logo/i.test(src)) pic = src;
-    });
-  }
-  if (pic && pic.startsWith('//')) pic = 'https:' + pic;
-  return pic;
+  const cover = urls.find((u) => /thumbs\/|cover|fuqiu/i.test(u));
+  if (cover) return cover;
+  // 全站通用占位图直接丢掉
+  const real = urls.find((u) => !/4135|placeholder|loading|blank|grey/i.test(u));
+  return real || '';
 }
 
 function parseList(html) {
   const $ = cheerio.load(deobfuscate(html));
-  const videos = [];
-  const seen = new Set();
+  // 同一视频有两个 <a>（缩略图卡 + 标题行），按 vid 合并：标题取最长的，封面取真实的
+  const byVid = new Map();
   $('a[href]').each((_, a) => {
     const vid = normVid($(a).attr('href') || '', '');
-    if (!vid || seen.has(vid)) return;
+    if (!vid) return;
     const inner = $(a);
-    let title = clean(inner.attr('title') || '');
-    if (!title) title = clean(inner.text()).slice(0, 120);
-    if (!title) return;
-    seen.add(vid);
-    videos.push({ vid, title, pic: pickPic($, inner) });
+    const title = clean(inner.attr('title') || '') || clean(inner.text()).slice(0, 120);
+    const pic = pickPic($, inner);
+    const cur = byVid.get(vid) || { vid, title: '', pic: '' };
+    if (title.length > cur.title.length) cur.title = title;
+    if (pic && (!cur.pic || !/thumbs\/|cover|fuqiu/i.test(cur.pic))) cur.pic = pic;
+    byVid.set(vid, cur);
   });
-  return videos;
+  return [...byVid.values()].filter((v) => v.title);
 }
 
 function parsePageCount(html, pg) {
