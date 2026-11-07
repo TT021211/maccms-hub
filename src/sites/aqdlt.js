@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 爱情岛站点适配器（https://vip.aqdm888.com:20844 等镜像，AQDLT_BASE 可换）。
+ * aqdlt 专用站点适配器（https://vip.aqdm888.com:20844 等镜像，AQDLT_BASE 可换）。
  * 页面是 sojson 混淆（`var html='...'` 反转字符串 + 解码桩 document.write 还原），
  * 解析前先用 vm 还原（只给 document/console 桩，无网络能力，5 秒超时）。
  * 详情页内嵌原生 m3u8（cdn.aqd-tv.com）→ passthrough 直传，无需转封装/中转。

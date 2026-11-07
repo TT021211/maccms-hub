@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * HoHoJ 站点适配器（https://hohoj.tv）。
+ * hohoj 专用站点适配器（https://hohoj.tv）。
  * 详情页只是个壳（标题/封面），真实播放地址在内嵌 iframe `/embed?id=<vid>` 里，
  * 框架经 expandDetailUrl 自动跟进抓子页；子页内是原生 m3u8（video-*.ggjav.com），
  * passthrough 直传，无需转封装/中转，直连可达。
@@ -232,7 +232,7 @@ async function ensureNavCats(base, fetchFn) {
   }
 }
 
-// 女优墙 /all_models（order=popular|views，p 翻页）与女优作品页 /model?id=N（p 翻页，
+// 人物墙 /all_models（order=popular|views，p 翻页）与人物作品页 /model?id=N（p 翻页，
 // 与列表页同一套 video-item 结构 + changePage 分页，可复用 parseList/parsePageCount）。
 function parseModels(html) {
   const $ = cheerio.load(html);
@@ -284,7 +284,7 @@ function fmtTime() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
-// ac=models / ac=model-videos：走 MacCMS 信封，女优本身映射成 vod 条目
+// ac=models / ac=model-videos：走 MacCMS 信封，人物本身映射成 vod 条目
 //（vod_id=`model-<mid>`，MoonTVPlus 侧以此外缀识别走 model-videos 通道）。
 async function handleModels(site, req, res, ac) {
   const q = req.query;

@@ -112,12 +112,12 @@ module.exports = {
 
   // ===== 进阶钩子（默认不用，特殊站按需打开，见已有站点示例） =====
   // detailUrl(vid, base): 详情页地址，默认 `${base}/watch?v=${vid}`（hanime1 系）；
-  //   missav 系是 /<slug>，aqdlt 系是 /videos/play/<vid>.html，各自覆盖即可。
-  // passthrough: true —— 上游给原生 m3u8（如 missav surrit / aqdlt cdn.aqd-tv），
+  //   已下线频道系是 /<slug>，aqdlt 系是 /videos/play/<vid>.html，各自覆盖即可。
+  // passthrough: true —— 上游给原生 m3u8（如 aqdlt cdn.aqd-tv），
   //   框架原样透传，不拼 /h/ 转封装。列表不带 vod_play_url（聚合搜索会过滤掉，
   //   只走频道/寻片）；详情 episodes 必须自带 url。
   //   mp4 站不要开，默认走 /h/ ffmpeg 转封装。
-  // useRelay: true —— 站点被 CF 拦截、VPS 直连拿不到字节时（如 missav），
+  // useRelay: true —— 站点被 CF 拦截、VPS 直连拿不到字节时，
   //   fetchHtml 改走 ScraperAPI render 中转（需 SCRAPERAPI_KEY 环境变量，按次计费，
   //   网关侧并发排队 RELAY_MAX_CONCURRENT 默认 3）。直连站不要开。
   // 页面混淆（如 aqdlt 的 sojson）：在 parseList/parseDetail 开头先还原再 cheerio，

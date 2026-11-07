@@ -50,7 +50,7 @@ function siteOf(name) {
   return s || null;
 }
 
-// ScraperAPI 中转（给 CF 站用，如 missav）：render=true 是必须的，普通模式会被拒。
+// ScraperAPI 中转（给 CF 站用）：render=true 是必须的，普通模式会被拒。
 // 结果按原始 URL 缓存，credits 只花在缓存未命中时。
 function buildRelayUrl(url) {
   const key = process.env.SCRAPERAPI_KEY || '';
@@ -110,7 +110,7 @@ async function fetchHtml(site, url) {
     const hit = cacheGet('html:' + url);
     if (hit) return hit;
   }
-  // 中转模式（missav 这类 CF 站）：走 ScraperAPI render，结果按原 URL 缓存
+  // 中转模式（CF 站）：走 ScraperAPI render，结果按原 URL 缓存
   if (site.def.useRelay) {
     const relay = buildRelayUrl(url);
     if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
@@ -219,7 +219,7 @@ function hlsEvict() {
 }
 
 // 详情页地址：默认 /watch?v=（hanime 系），适配器可用 detailUrl(vid, base) 覆盖
-// （missav 的 /<slug>、aqdlt 的 /videos/play/<vid>.html、hohoj 的 /video?id=<vid>）
+// （已下线频道的 /<slug>、aqdlt 的 /videos/play/<vid>.html、hohoj 的 /video?id=<vid>）
 function defaultDetailUrl(vid, base) {
   return `${base}/watch?v=${encodeURIComponent(vid)}`;
 }
@@ -425,7 +425,7 @@ async function handleList(site, req, res) {
       vod_remarks: '',
       vod_time: fmtTime(),
       vod_play_from: site.def.displayName,
-      // 直通站（原生 m3u8，如 missav）：列表不拼选集，详情页自带直链；
+      // 直通站（原生 m3u8）：列表不拼选集，详情页自带直链；
       // 非直通站：列表带单集 HLS（MoonPlus 只收录 .m3u8 且按 episodes.length 过滤）
       vod_play_url:
         !site.def.passthrough && site.publicBase
@@ -574,7 +574,7 @@ function dispatchWith(siteName, req, res) {
       (ac === 'models' || ac === 'model-videos') &&
       typeof site.def.handleModels === 'function'
     ) {
-      // 站点扩展位（如 hohoj 女优墙/女优作品），走 MacCMS 信封
+      // 站点扩展位（如 hohoj 人物墙/人物作品），走 MacCMS 信封
       p = site.def.handleModels(site, req, res, ac);
     } else {
       return res.status(400).json({ code: 0, msg: 'unknown ac, use ac=list|detail' });
