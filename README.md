@@ -2,7 +2,7 @@
 
 把任意刮削站实时转成 **MacCMS V10 `provide/vod` 采集接口** + **HLS 播放链路**，
 供 MoonTVPlus（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
-含 `/hanime` 里番 / `/missav` / `/aqdlt` 爱情岛 / `/hohoj` 四个频道）聚合搜索与播放。
+含 `/hanime` 里番 / `/aqdlt` 爱情岛 / `/hohoj` 三个频道）聚合搜索与播放。
 
 仓库：`https://github.com/TT021211/maccms-hub`（Public；push 即云构建 `ghcr.io/tt021211/maccms-hub:latest`，amd64+arm64）
 
@@ -26,7 +26,6 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 |---|---|
 | `src/server.js` | 通用核心：路由/缓存/MacCMS 信封/`/play`/ffmpeg HLS/中转排队，多站共存 |
 | `src/sites/hanime1.js` | hanime1 适配器（13 分类 + 解析，行为与老服务一致） |
-| `src/sites/missav.js` | MissAV 适配器（13 分类，surrit 原生 m3u8 直传 + `useRelay` 中转） |
 | `src/sites/aqdlt.js` | 爱情岛适配器（13 分类，sojson 还原 + cdn.aqd-tv 原生 m3u8 直传） |
 | `src/sites/hohoj.js` | HoHoJ 适配器（13 分类，iframe 二跳 `/embed` + ggjav 原生 m3u8 直传，720P） |
 | `src/sites/_template.js` | 新站模板（复制填空，见第 8 节） |
@@ -36,11 +35,16 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | `.github/workflows/docker-image.yml` | push 即云构建 GHCR |
 
 环境变量：`PORT`（3001）、`DEFAULT_SITE`（`hanime1`，无前缀地址走它）、
-`<KEY>_BASE`（如 `HANIME_BASE`）、`CACHE_TTL`（默认 7200）、
+`<KEY>_BASE`（如 `HANIME_BASE`）、`CACHE_TTL`（默认 86400，列表/HTML 共用；详情独立上限 86400）、
 `PUBLIC_BASE_<KEY>`（如 `PUBLIC_BASE_HANIME1=https://hanime1.acxou.hair`，不设则回退 watch 页）、
 `HLS_DIR`（默认 `/tmp/hls`）、`HLS_MAX_GB`（默认 8）、`SCRAPERAPI_KEY`
-（只给开 `useRelay` 的 CF 站用，如 missav；hanime1/aqdlt 等直连站不受影响）、
+（只给开 `useRelay` 的 CF 站用；当前三站均为直连，可不设）、
 `RELAY_MAX_CONCURRENT`（中转并发上限，默认 3，试用 key 并发低不要调大）。
+
+> 2026-11-08 调参（提速向）：`CACHE_TTL` 默认 7200→86400（列表/HTML 共用；详情独立上限 24h，
+> `/play` 转封装链仍实时 bypass）；上游抓取 25s×全 UA → 12s×最多 2 个 UA；
+> `handleDetail` 批量并发限 5，单个 vid 失败只丢该条（不再整单 502）；
+> HLS 切片 `hls_time` 6→4（首屏更快），ffmpeg 超时 300→600s（大片不断）。
 
 ## 3. 接口
 
@@ -66,7 +70,6 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | 站 | 列表/详情 | 播放源 | 备注 |
 |---|---|---|---|
 | hanime1 | 直连抓取 | mp4 → `/h/` ffmpeg 转封装 | 老服务原样迁移 |
-| missav | ScraperAPI render 中转（`useRelay`） | surrit 原生 m3u8 直传（`passthrough`） | 详情页内联脚本 UUID → `surrit.com/<UUID>/playlist.m3u8`；播放须开 MoonTV 源 proxyMode（surrit 只认 missav.ai Referer，见 6.12） |
 | aqdlt 爱情岛 | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框；m3u8 无 CORS 头，须开 MoonTV 源 proxyMode |
 | hohoj | 直连抓取（无 CF） | ggjav 原生 m3u8 直传（`passthrough`，单码率 720p） | 详情页是壳，真实地址在内嵌 `/embed?id=` 子页（框架 `expandDetailUrl` 自动跟进）；m3u8 自带 CORS 头，直连可播 |
 
@@ -98,22 +101,19 @@ nginx（`/opt/nginx/conf.d/hanime1.acxou.hair.conf`）：`proxy_pass http://macc
 改完 `docker exec nginx-proxy nginx -t && docker exec nginx-proxy nginx -s reload`。
 证书沿用老流程（`certbot --config-dir /opt/nginx/certbot/conf`，见老文档）。
 
-MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime` `/missav`
-`/aqdlt` `/hohoj` 四个频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
+MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime`
+`/aqdlt` `/hohoj` 三个频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
 
 ```
 源管理 → 自定义源：
   key: hanime1, api: http://maccms-hub:3001/hanime1/api.php/provide/vod
-  key: missav,  api: http://maccms-hub:3001/missav/api.php/provide/vod   + 开 proxyMode
   key: aqdlt,   api: http://maccms-hub:3001/aqdlt/api.php/provide/vod     + 开 proxyMode
   key: hohoj,   api: http://maccms-hub:3001/hohoj/api.php/provide/vod
 后台打开「禁用黄色过滤器」（环境变量 NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true，
 否则 Cosplay 分类会被黄词表杀掉）
 ```
 
-missav 必须开 proxyMode：surrit 只认 `https://missav.ai/` 的 Referer，
-播放走本站 `/api/proxy/vod/m3u8` 中转（`UPSTREAM_REFERER_OVERRIDE` 已配好）。
-aqdlt 也必须开：cdn.aqd-tv 的 m3u8 不带 CORS 头，浏览器直连被拦（分片 200 但无 ACAO）。
+aqdlt 必须开 proxyMode：cdn.aqd-tv 的 m3u8 不带 CORS 头，浏览器直连被拦（分片 200 但无 ACAO）。
 hohoj 不用开：ggjav 自带 `Access-Control-Allow-Origin: *`，直连可播。
 
 ## 5. 日常运维
@@ -155,18 +155,17 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
    看 `[hls]` 日志原文。
 10. **搜XX无结果但别的词有**：先看我们日志回了几条——回 N 条但前台无 = 被 MoonPlus 侧过滤；
     回 0 条 = 站内真没有或关键词被输入法搞错。
-11. **missav（2026-11-04 已打通，走 ScraperAPI render 中转）**：VPS 直连被 CF 拦截，
+11. **missav（2026-11-04 曾打通，2026-11-07 适配器下线，仅留档）**：VPS 直连被 CF 拦截，
     实测 UA 轮换 ❌ / TLS 伪装 ❌ / AnySearch 提取 ❌，仅 `render=true` 真渲染通过
     （列表 198K / 详情 328K，UUID 与 surrit seek 图双印证）。
-    网关 `fetchHtml` 支持 `useRelay`（`sites/missav.js` 已开，需 `SCRAPERAPI_KEY`，按次计费，
-    2 小时缓存挡重复），hanime1 等直连站零影响。ThisAV 系域名同期已被 JAV Anti-Piracy
+    网关 `fetchHtml` 仍保留 `useRelay` 通用能力（需 `SCRAPERAPI_KEY`，按次计费），
+    当前三站均为直连，`SCRAPERAPI_KEY` 可不设。ThisAV 系域名同期已被 JAV Anti-Piracy
     Project 没收，不用再试。
-12. **missav 播放链路**：详情页 UUID → surrit m3u8 直传，但 surrit 只认
+12. **missav 播放链路（留档）**：详情页 UUID → surrit m3u8 直传，但 surrit 只认
     `https://missav.ai/` 的 Referer（curl 实测：自己/空 Referer 403，missav 的 200），
-    浏览器直连必被拦。解法：MoonTV 源开 proxyMode，播放走本站 `/api/proxy/vod/m3u8`
+    浏览器直连必被拦。当时解法：MoonTV 源开 proxyMode，播放走本站 `/api/proxy/vod/m3u8`
     中转，服务端带正确 Referer 去拿（`UPSTREAM_REFERER_OVERRIDE`，m3u8/segment/key
-    三处共用）。另：MoonTV 详情接口默认 10 秒超时，中转一次 24~48 秒必被 abort
-    （`{"error":"This operation was aborted"}`），已提到 120 秒（`downstream.ts`）。
+    三处共用）。
 13. **aqdlt sojson 整站混淆（2026-11-05 打通）**：列表/详情 HTML 全是反转字符串载荷 +
     解码桩 `document.write` 还原。网关用 Node vm 跑站点自己的解码器（只给 document 桩，
     无网络/定时器，5 秒超时），还原后再 cheerio 解析，模板已沉淀（`_template.js` 进阶钩子）。
@@ -212,7 +211,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     `ac=model-videos`（MacCMS 信封，女优条目 `vod_id=model-<mid>`），`server.js` 经
     `handleModels` 可选钩子分发。里番（首页/搜索页抓 `search?genre=` 链接，CF 拦截时回退内置 13 个，
     本地 403 属正常）与爱情岛（首页 sojson 还原后取 7 地区 + 68 标签，`cat-<slug>` /
-    `tag-<slug>`）同样并入导航。missav 不动。所有 CATS 条目带 `group` 字段
+    `tag-<slug>`）同样并入导航。所有 CATS 条目带 `group` 字段
     （精選/類型/主題/標籤/地區/分类），`?ac=list` 的 class 原样透出，前端面包屑按组展开。
     `npm test` 里 CATS 数量断言已放宽为 `>= 13`（在线会涨，离线回退）。
 
@@ -231,12 +230,12 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 - 播放页：工具条只留下载/复制链接/App跳转/去广告/超分+选集；左右 26% 热区双击快退/快进；
   删推荐/豆瓣评论/AI评论/网盘弹窗/AI面板/快捷键弹窗。
 - 黄色过滤默认开，搜索页“高级”下拉有前台开关（`?yellowFilter=`，6 个搜索/分类接口全支持）；
-  R18 四频道专属路由 bypass —— VPS 上 `NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true` 可以拿掉了。
+  R18 三频道专属路由 bypass —— VPS 上 `NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true` 可以拿掉了。
 - 自定义分类每行独立启用/禁用（后台本来就有，不用改）。
 - 大删除：观影室/WebTV/直播/漫画/书/音乐/求片/AI/通知/离线下载/短剧等路由+API+组件
-  （约 -5.6 万行），保留搜索/豆瓣/播放/收藏/下载/四频道；`admin` 后台没动。
+  （约 -5.6 万行），保留搜索/豆瓣/播放/收藏/下载/三频道；`admin` 后台没动。
 - 通用自建源新建 `/browse` 页（源切换 + 真实 `?ac=list` 父/子分类 + 网格 + 去重收敛的下滑加载），
   导航“源浏览”；`api/source-search` 恢复（分类补 `?yellowFilter=`，videos 补 `pageCount` 兜底）。
-- HoHoJ 女优墙（影片/女优切换＋头像圆墙＋作品流）与四频道＋`/browse` 统一分类面包屑
+- HoHoJ 女优墙（影片/女优切换＋头像圆墙＋作品流）与三频道＋`/browse` 统一分类面包屑
   （选中路径＋共 N 个分类，点一下按组展开；小列表自动平铺）；频道副标题分类数改为动态计数。
 - 联动：本网关 hohoj 翻页修复（见 6.18）必须 `push → VPS pull`，否则 HoHoJ 频道翻页还是死的。

@@ -106,69 +106,7 @@ async function main() {
     srv.close();
   }
 
-  // 6. missav 适配器
-  const missav = require('../src/sites/missav');
-  assert.strictEqual(missav.key, 'missav');
-  assert.strictEqual(missav.passthrough, true);
-  assert.strictEqual(missav.CATS.length, 13);
-  assert.strictEqual(missav.catById(3).genre, '/uncensored-leak');
-  assert.ok(
-    missav.buildSearchUrl({ query: 'SSIS', pg: 1 }, 'https://missav.ai') ===
-      'https://missav.ai/search/SSIS',
-    missav.buildSearchUrl({ query: 'SSIS', pg: 1 }, 'https://missav.ai')
-  );
-  assert.ok(
-    missav.buildSearchUrl({ genre: '/new', pg: 2 }, 'https://missav.ai').includes('page=2')
-  );
-  assert.strictEqual(
-    missav.buildSearchUrl({ pg: 1 }, 'https://missav.ai'),
-    'https://missav.ai/new'
-  );
-
-  // 分页熔断：虚高页码锁死在 pg+10，防无限翻页烧中转额度
-  assert.strictEqual(missav.parsePageCount('<a href="?page=2000">末页</a>', 1), 11);
-  assert.strictEqual(missav.parsePageCount('<a href="?page=5">5</a>', 1), 5);
-
-  // parseList：混入导航/广告链接，只收番号卡（真实渲染 DOM：绝对地址 + Vue 属性）
-  const missavListHtml = `
-    <a href="https://missav.ai/dm539/new">最近更新</a>
-    <a href="https://missav.ai/dm301/today-hot">今日熱門</a>
-    <a href="/genres">類型</a>
-    <a href="https://missav.ai/dldss-572"><img :class="{x:1}" data-src="https://fourhoi.com/dldss-572/cover-t.jpg" src="https://fourhoi.com/dldss-572/cover-t.jpg" alt="DLDSS-572 標題"></a>
-    <a href="/dm14/pred-164-uncensored-leak"><img src="https://fourhoi.com/pred-164-uncensored-leak/cover-t.jpg"><span>PRED-164 標題</span></a>
-    <a href="https://bit.ly/xyz">广告</a>
-    <a href="#">top</a>`;
-  const mItems = missav.parseList(missavListHtml);
-  assert.strictEqual(mItems.length, 2, JSON.stringify(mItems));
-  assert.strictEqual(mItems[0].vid, 'dldss-572');
-  assert.strictEqual(mItems[0].pic, 'https://fourhoi.com/dldss-572/cover-t.jpg');
-  assert.strictEqual(mItems[1].vid, 'pred-164-uncensored-leak');
-  // 详情地址钩子
-  assert.strictEqual(
-    missav.detailUrl('dasd-542-uncensored-leak', 'https://missav.ai'),
-    'https://missav.ai/dasd-542-uncensored-leak'
-  );
-
-  // parseDetail：字面 surrit 直链优先
-  const dHtmlLit = `<html><head><meta property="og:title" content="DASD-542 标题 - MissAV"></head>
-    <body><h1>fallback</h1><video><source src="https://surrit.com/abc/playlist.m3u8"></video></body></html>`;
-  const dd1 = missav.parseDetail(dHtmlLit, 'dasd-542-uncensored-leak');
-  assert.strictEqual(dd1.title, 'DASD-542 标题');
-  assert.strictEqual(dd1.sources[0].src, 'https://surrit.com/abc/playlist.m3u8');
-  assert.strictEqual(dd1.episodes[0].url, 'https://surrit.com/abc/playlist.m3u8');
-
-  // parseDetail：脚本内 UUID → 拼 playlist（广告位 blob UUID 无 surrit 上下文，不会被误取）
-  const dHtmlUuid = `<html><body>
-    <iframe src="blob:https://missav.ai/723f72fb-a8bd-45e8-b06c-ab67ce8cb34a"></iframe>
-    <script>var player={cdn:"surrit",uuid:"9eca65c0-66dc-44c9-9fb4-edf9a576146d",quality:"1080p"};</script>
-    </body></html>`;
-  const dd2 = missav.parseDetail(dHtmlUuid, 'x');
-  assert.strictEqual(
-    dd2.episodes[0].url,
-    'https://surrit.com/9eca65c0-66dc-44c9-9fb4-edf9a576146d/playlist.m3u8'
-  );
-
-  // 6b. 中转排队：同一事件循环内串行化（RELAY_MAX_CONCURRENT=1 时验证 FIFO）
+  // 6. 中转排队：同一事件循环内串行化（RELAY_MAX_CONCURRENT=1 时验证 FIFO）
   delete require.cache[require.resolve('../src/server')];
   process.env.RELAY_MAX_CONCURRENT = '1';
   const hub2 = require('../src/server');
@@ -186,14 +124,14 @@ async function main() {
   const { buildRelayUrl } = require('../src/server');
   const prevKey = process.env.SCRAPERAPI_KEY;
   process.env.SCRAPERAPI_KEY = 'testkey123';
-  const relayUrl = buildRelayUrl('https://missav.ai/dm539/new');
+  const relayUrl = buildRelayUrl('https://example.com/list');
   assert.ok(
     relayUrl ===
-      'http://api.scraperapi.com?api_key=testkey123&url=https%3A%2F%2Fmissav.ai%2Fdm539%2Fnew&render=true',
+      'http://api.scraperapi.com?api_key=testkey123&url=https%3A%2F%2Fexample.com%2Flist&render=true',
     relayUrl
   );
   delete process.env.SCRAPERAPI_KEY;
-  assert.strictEqual(buildRelayUrl('https://missav.ai/'), null);
+  assert.strictEqual(buildRelayUrl('https://example.com/'), null);
   if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
 
   // 8. aqdlt 适配器（sojson 还原 + 原生 m3u8 直传）

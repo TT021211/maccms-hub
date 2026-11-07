@@ -20,7 +20,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const PORT = Number(process.env.PORT || 3001);
-const CACHE_TTL = Number(process.env.CACHE_TTL || 7200) * 1000;
+const CACHE_TTL = Number(process.env.CACHE_TTL || 86400) * 1000;
 const HLS_DIR = process.env.HLS_DIR || '/tmp/hls';
 const HLS_MAX_GB = Number(process.env.HLS_MAX_GB || 8);
 const DEFAULT_SITE = process.env.DEFAULT_SITE || 'hanime1';
@@ -125,11 +125,11 @@ async function fetchHtml(site, url) {
     }
   }
   const uaList = (site.def.UA_LIST || []).filter(Boolean);
-  const uas = uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'];
+  const uas = (uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36']).slice(0, 2);
   let lastErr = null;
   for (const ua of uas) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
       const res = await fetch(url, { headers: site.def.headersFor(ua, site.base), signal: ctrl.signal });
       if (res.status === 403 || res.status === 503) {
@@ -149,7 +149,7 @@ async function fetchHtml(site, url) {
   throw lastErr || new Error('fetch failed for ' + url);
 }
 
-function ffExec(args, timeoutMs = 300000) {
+function ffExec(args, timeoutMs = 600000) {
   return new Promise((resolve, reject) => {
     execFile('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) reject(new Error('ffmpeg: ' + (stderr || err.message).slice(0, 500)));
@@ -288,7 +288,7 @@ function ensureHls(site, vid) {
     ];
     const hlsArgs = [
       '-map', '0:v:0', '-map', '0:a:0?',
-      '-f', 'hls', '-hls_time', '6', '-hls_list_size', '0',
+      '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0',
       '-hls_segment_filename', segPattern, playlist,
     ];
     try {
@@ -471,49 +471,61 @@ async function handleDetail(site, req, res) {
   ids = ids.slice(0, 20); // 单次最多 20, 防上游限流
 
   try {
-    const results = await Promise.all(
-      ids.map(async (vid) => {
-        const ckey = `detail:${site.key}:` + vid;
-        const cached = cacheGet(ckey);
-        if (cached) return cached;
-        const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
-        const d = site.def.parseDetail(metaHtml, vid, playHtml);
-        // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
-        // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；
-        // 否则拼上游站 watch 页 (仅跳转)
-        const epLink = (e) =>
-          e.url ||
-          (site.publicBase
-            ? `${site.publicBase}/h/${site.key}/${e.vid}/index.m3u8`
-            : `${site.base}/watch?v=${e.vid}`);
-        const playUrl = d.episodes.map((e) => `${e.name}$${epLink(e)}`).join('#');
-        const bestQ = d.sources.length && d.sources[0].size ? `${d.sources[0].size}p` : '';
-        const vod = {
-          vod_id: vid,
-          vod_name: d.title,
-          type_id: site.def.CATS[0] ? site.def.CATS[0].type_id : 1,
-          type_name: d.genreName || (site.def.CATS[0] ? site.def.CATS[0].type_name : ''),
-          vod_pic: d.pic,
-          vod_actor: d.actor,
-          vod_content: d.desc,
-          vod_remarks: bestQ || `${d.episodes.length}集`,
-          vod_year: '',
-          vod_area: '',
-          vod_lang: '',
-          vod_time: fmtTime(),
-          vod_play_from: site.def.displayName,
-          vod_play_server: '',
-          vod_play_note: '',
-          vod_play_url: playUrl,
-          vod_tag: (d.tags || []).join(','),
-          vod_class: (d.tags || []).join(','),
-        };
-        cacheSet(ckey, vod, Math.min(CACHE_TTL, 3600 * 1000));
-        // 轻微限流
-        await new Promise((r) => setTimeout(r, 120));
-        return vod;
-      })
-    );
+    // 并发限 5 + 单 vid 失败只丢该条：一个详情挂了不整单 502
+    const CONC = 5;
+    const results = [];
+    for (let i = 0; i < ids.length; i += CONC) {
+      const batch = await Promise.all(
+        ids.slice(i, i + CONC).map(async (vid) => {
+          try {
+            const ckey = `detail:${site.key}:` + vid;
+            const cached = cacheGet(ckey);
+            if (cached) return cached;
+            const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
+            const d = site.def.parseDetail(metaHtml, vid, playHtml);
+            // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
+            // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；
+            // 否则拼上游站 watch 页 (仅跳转)
+            const epLink = (e) =>
+              e.url ||
+              (site.publicBase
+                ? `${site.publicBase}/h/${site.key}/${e.vid}/index.m3u8`
+                : `${site.base}/watch?v=${e.vid}`);
+            const playUrl = d.episodes.map((e) => `${e.name}$${epLink(e)}`).join('#');
+            const bestQ = d.sources.length && d.sources[0].size ? `${d.sources[0].size}p` : '';
+            const vod = {
+              vod_id: vid,
+              vod_name: d.title,
+              type_id: site.def.CATS[0] ? site.def.CATS[0].type_id : 1,
+              type_name: d.genreName || (site.def.CATS[0] ? site.def.CATS[0].type_name : ''),
+              vod_pic: d.pic,
+              vod_actor: d.actor,
+              vod_content: d.desc,
+              vod_remarks: bestQ || `${d.episodes.length}集`,
+              vod_year: '',
+              vod_area: '',
+              vod_lang: '',
+              vod_time: fmtTime(),
+              vod_play_from: site.def.displayName,
+              vod_play_server: '',
+              vod_play_note: '',
+              vod_play_url: playUrl,
+              vod_tag: (d.tags || []).join(','),
+              vod_class: (d.tags || []).join(','),
+            };
+            cacheSet(ckey, vod, Math.min(CACHE_TTL, 86400 * 1000));
+            // 轻微限流
+            await new Promise((r) => setTimeout(r, 120));
+            return vod;
+          } catch (err) {
+            console.warn(`[detail][${site.key}] ${vid} 失败跳过: ${(err && err.message) || err}`);
+            return null;
+          }
+        })
+      );
+      for (const v of batch) if (v) results.push(v);
+    }
+    if (!results.length) return res.status(502).json({ code: 0, msg: '上游抓取失败' });
     res.__listLen = results.length;
     res.json({
       code: 1,
