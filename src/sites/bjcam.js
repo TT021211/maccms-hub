@@ -2,19 +2,24 @@
 
 /**
  * bjcam (sexbjcam.com, WordPress retrotube 录播站) 适配器。
- * 无反爬（直连抓取，无 CF），SSR，WP 标准翻页：
+ * WP 标准翻页：
  *   最新 /?filter=latest：大网格（单页上百卡）+ .pagination
  *   分类 /category/<slug>/：.con_post 网格 25 卡/页 + .pagination（/page/N/）
  *   搜索 /?s=<词>（翻页 /page/N/?s=<词>）：同一套卡片
  *   卡片 article.thumb-block a[href=/YYYY/MM/DD/slug]，vid 取 WP post id
  *     （article[data-post-id]，详情走 /?p=<id> 短链跟随跳转）
- *   详情：og:title/og:image + iframe video.playerrecord.cfd/e/<code>，
- *     播放流在 player API /app/v1/play/<code>?embed=1&ref= 的 JSON 里（hls/master.m3u8），
- *     框架经 expandDetailUrl 自动跟进抓取。
- *     流地址含时效段（expires_at 约 4 小时），列表/详情 HTML 走中转且照常缓存（省调用次数），
- *     player JSON 直连且每次现抓（noCachePlayHtml）+ detailTtlMs 1 小时，
+ * 详情：og:title/og:image + embed iframe，分新老两套播放器：
+ *   新：video.playerrecord.cfd/e/<code>，流在 player API
+ *     /app/v1/play/<code>?embed=1&ref= 的 JSON 里（hls/master.m3u8），
+ *     框架经 expandDetailUrl 自动跟进抓取；
+ *   老：playrecord.biz/embed/<code>（旧片），页内是 packer 混淆的 jwplayer 配置，
+ *     解出 links.hls2（自带 token，优先）/hls4（相对路径，需 embed 域补全）/hls3，
+ *     expand 直接返回 embed 页地址，parseDetail 解码提流。
+ *     流地址含时效，列表/详情 HTML 走中转且照常缓存（省调用次数），
+ *     二跳（player JSON/旧 embed 页）每次现抓（noCachePlayHtml）+ detailTtlMs 1 小时，
  *     详情缓存只保标题封面这类静态字段，过期即重抓换新流。
- *     注意：整站被 CF 拦截，服务端直连拿挑战页，需配 SCRAPERAPI_KEY 走中转。
+ * 注意：sexbjcam 主站对部分网络弹 CF 挑战，需配 SCRAPERAPI_KEY 走中转
+ * （relayOnChallenge 先直连，挑战才转）；embed 及流地址域直连可达。
  */
 
 const cheerio = require('cheerio'); // eslint-disable-line
@@ -101,14 +106,67 @@ function detailUrl(vid, base) {
   return `${base}/?p=${encodeURIComponent(String(vid))}`;
 }
 
-// 详情页只是元数据壳 + embed iframe，真实流在 player API 的 JSON 里，框架自动跟进
-function expandDetailUrl(metaHtml, vid, base) {
-  const m = String(metaHtml || '').match(
-    /(https?:\/\/[^\s"'<>]+)\/e\/([A-Za-z0-9]+)/
+// expandDetailUrl 记下的旧 embed 页 origin（hls4 相对路径补全用），parse 后即删
+const embedBaseByVid = new Map();
+
+// Dean Edwards packer 解码（旧 embed 页的 jwplayer 配置用它混淆）
+function unpackDeanEdwards(src) {
+  const m = String(src || '').match(
+    /eval\(function\(p,a,c,k,e,d\)\{.*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)\)\)/
   );
   if (!m) return '';
-  const ref = encodeURIComponent(detailUrl(vid, base));
-  return `${m[1]}/app/v1/play/${m[2]}?embed=1&ref=${ref}`;
+  let p = m[1];
+  const a = parseInt(m[2], 10) || 36;
+  let c = parseInt(m[3], 10) || 0;
+  const k = String(m[4]).split('|');
+  const alpha = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.slice(0, a);
+  const toBase = (n) => {
+    if (!n) return '0';
+    let s = '';
+    while (n > 0) {
+      s = alpha[n % a] + s;
+      n = Math.floor(n / a);
+    }
+    return s;
+  };
+  while (c > 0) {
+    c -= 1;
+    if (c < k.length && k[c]) {
+      // 必须带 \b 词边界（跟原 packer 一致），否则短码会污染已替换的长词
+      p = p.replace(new RegExp(`\\b${toBase(c)}\\b`, 'g'), k[c]);
+    }
+  }
+  return p;
+}
+
+// 旧 embed 页解出三路流地址（优先级 hls2 > hls4 > hls3 见下）
+function extractOldEmbedStreams(playHtml) {
+  const code = unpackDeanEdwards(playHtml);
+  if (!code) return {};
+  const out = {};
+  const lm = code.match(/["'](hls\d)["']\s*:\s*"([^"]+)"/g) || [];
+  for (const item of lm) {
+    const mm = item.match(/["'](hls\d)["']\s*:\s*"([^"]+)"/);
+    if (mm && !out[mm[1]]) out[mm[1]] = mm[2];
+  }
+  return out;
+}
+
+// 详情页只是元数据壳 + embed iframe，框架自动跟进：
+// 新 embed（playerrecord.cfd）跟 player API 取 JSON；旧 embed（playrecord.biz）直接跟 embed 页
+function expandDetailUrl(metaHtml, vid, base) {
+  const src = String(metaHtml || '');
+  const nm = src.match(/(https?:\/\/[^\s"'<>]+)\/e\/([A-Za-z0-9]+)/);
+  if (nm) {
+    const ref = encodeURIComponent(detailUrl(vid, base));
+    return `${nm[1]}/app/v1/play/${nm[2]}?embed=1&ref=${ref}`;
+  }
+  const om = src.match(/(https?:\/\/[^\s"'<>]*playrecord\.biz)\/embed\/([A-Za-z0-9]+)/);
+  if (om) {
+    embedBaseByVid.set(String(vid), om[1]);
+    return `${om[1]}/embed/${om[2]}`;
+  }
+  return '';
 }
 
 function parseDetail(html, vid, playHtml) {
@@ -132,22 +190,45 @@ function parseDetail(html, vid, playHtml) {
     if (t && !actors.includes(t)) actors.push(t);
   });
 
-  // 播放页是 player API 的 JSON（hls 优先，mp4 兜底）
+  // 播放页二选一：
+  // A. 新 embed 的 player API JSON（hls 优先，mp4 兜底）
+  // B. 旧 embed 页：解 packer 拿 links（hls2 自带 token 优先，hls4 相对路径用 embed 域补全，hls3 兜底）
   let stream = '';
   let streamPoster = '';
-  try {
-    const j = JSON.parse(String(playHtml !== undefined ? playHtml : ''));
-    if (j && typeof j === 'object') {
-      stream = String(j.hls || j.mp4 || '').trim();
-      streamPoster = String(j.poster || '').trim();
+  const playText = String(playHtml !== undefined ? playHtml : '');
+  const trimmed = playText.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const j = JSON.parse(trimmed);
+      if (j && typeof j === 'object') {
+        stream = String(j.hls || j.mp4 || '').trim();
+        streamPoster = String(j.poster || '').trim();
+      }
+    } catch {
+      /* 走下面正则兜底 */
     }
-  } catch {
-    const m2 = String(playHtml !== undefined ? playHtml : html).match(
+  }
+  if (!stream && (playText.includes('jwplayer') || playText.includes('.urlset/'))) {
+    const links = extractOldEmbedStreams(playText);
+    const base = embedBaseByVid.get(String(vid)) || '';
+    embedBaseByVid.delete(String(vid));
+    stream =
+      String(links.hls2 || '').trim() ||
+      (String(links.hls4 || '').trim()
+        ? String(links.hls4).trim().startsWith('http')
+          ? String(links.hls4).trim()
+          : base + String(links.hls4).trim()
+        : '') ||
+      String(links.hls3 || '').trim();
+  }
+  if (!stream) {
+    const m2 = playText.match(
       /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/
     ) ||
-      String(playHtml !== undefined ? playHtml : html).match(
+      playText.match(
         /https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/
-      );
+      ) ||
+      String(html || '').match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
     if (m2) stream = m2[0];
   }
   if (!stream) {
@@ -175,7 +256,7 @@ module.exports = {
   passthrough: true, // 录播站原生 hls/mp4 直传，框架原样透传
   useRelay: true, // 整站被 CF 拦截时走 ScraperAPI render 中转（需 SCRAPERAPI_KEY）
   relayOnChallenge: true, // 先直连试一次（换干净 IP 可能直接过，免 key 零成本），遇 CF 挑战再转中转
-  directHosts: ['video.playerrecord.cfd'], // player API 域无 CF，可直连（省中转费）
+  directHosts: ['video.playerrecord.cfd', 'playrecord.biz'], // 播放相关域无 CF，可直连（省中转费）
   noCachePlayHtml: true, // player JSON 含短效流（约 4 小时），二跳每次现抓；列表/详情 HTML 照常缓存
   detailTtlMs: 3600 * 1000, // 流约 4 小时过期，详情缓存只保 1 小时
   CATS,
@@ -187,5 +268,7 @@ module.exports = {
   parsePageCount,
   detailUrl,
   expandDetailUrl,
+  extractOldEmbedStreams,
   parseDetail,
+  unpackDeanEdwards,
 };

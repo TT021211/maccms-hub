@@ -63,7 +63,7 @@ async function main() {
   assert.strictEqual(bjcam.CATS.length, 3);
   assert.strictEqual(bjcam.catById(2).genre, 'korean-bj');
   assert.strictEqual(bjcam.useRelay, true, '整站 CF 拦截，必须走中转');
-  assert.deepStrictEqual(bjcam.directHosts, ['video.playerrecord.cfd']);
+  assert.deepStrictEqual(bjcam.directHosts, ['video.playerrecord.cfd', 'playrecord.biz']);
   assert.strictEqual(bjcam.noCachePlayHtml, true);
   assert.strictEqual(
     bjcam.buildSearchUrl({ pg: 2 }, 'https://sexbjcam.com'),
@@ -118,6 +118,24 @@ async function main() {
   assert.strictEqual(bjDetail.episodes.length, 1);
   assert.strictEqual(bjDetail.episodes[0].url, 'https://cdn.example.com/x/master.m3u8');
   assert.deepStrictEqual(bjDetail.tags, ['KOREAN BJ']);
+
+  // 4c. bjcam 旧 embed（playrecord.biz，packer 混淆 jwplayer）：解码提流
+  const packedSample = String.raw`eval(function(p,a,c,k,e,d){while(c--)if(k[c])p=p.replace(new RegExp('\b'+c.toString(a)+'\b','g'),k[c]);return p}('0={"1":"10://11.100/101/x.m3u8"};0',2,6,'links|hls2|https|cdn|x|master'.split('|')))`;
+  const unpacked = bjcam.unpackDeanEdwards(packedSample);
+  assert.ok(
+    unpacked.includes('https://cdn.x/master/x.m3u8'),
+    unpacked.slice(0, 120)
+  );
+  const oldMetaHtml = '<html><body><iframe src="https://playrecord.biz/embed/cb6ohcnf08a8"></iframe></body></html>';
+  assert.strictEqual(
+    bjcam.expandDetailUrl(oldMetaHtml, '777', 'https://sexbjcam.com'),
+    'https://playrecord.biz/embed/cb6ohcnf08a8'
+  );
+  const oldPlayHtml = 'jwplayer("vplayer").setup({sources:[{file:"https://cdn.example.com/o/master.m3u8",type:"hls"}],image:"x"});'
+    + 'var links={"hls2":"https://cdn.example.com/o/master.m3u8"};';
+  const oldDetail = bjcam.parseDetail(bjMeta, '777', oldPlayHtml);
+  assert.strictEqual(oldDetail.episodes.length, 1);
+  assert.strictEqual(oldDetail.episodes[0].url, 'https://cdn.example.com/o/master.m3u8');
 
   // 5. 框架路由（离线断言，不碰上游）
   const { app } = require('../src/server');

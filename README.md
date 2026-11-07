@@ -228,7 +228,9 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     3 分类（最新发布/KOREAN BJ/CHINESE GIRL，WP 标准翻页 `/page/N/`）；
     列表 `/`（`?filter=latest`）+ `/category/<slug>/` + 搜索 `?s=` 同一套卡片解析，
     vid 取 WP post id，详情走 `/?p=<id>` 短链；
-    详情 og 取标题/封面 + iframe `video.playerrecord.cfd/e/<code>`，
+    详情 og 取标题/封面 + iframe（新片 `video.playerrecord.cfd/e/<code>`，
+    旧片 `playrecord.biz/embed/<code>`，packer 混淆的 jwplayer 配置，解出
+    links.hls2 自带 token 优先），
     播放流经 `expandDetailUrl` 二跳 player API `/app/v1/play/<code>?embed=1&ref=` 的 JSON
     （hls 优先、mp4 兜底，约 4 小时过期），`passthrough` 直传。
     整站被 CF 拦截（Node 直连拿挑战页；Python/IDM 能过，系 TLS 指纹差异），
