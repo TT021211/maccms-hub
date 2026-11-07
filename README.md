@@ -214,7 +214,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     （精選/類型/主題/標籤/地區/分类），`?ac=list` 的 class 原样透出，前端面包屑按组展开。
     `npm test` 里 CATS 数量断言已放宽为 `>= 13`（在线会涨，离线回退）。
 21. **kinostream（2026-11-08，台湾正版 VOD，`src/sites/kinostream.js`）**：无反爬，直连 SSR，
-    6 分类（最新上架/特別推薦/感官世界/B級特區/大眾娛樂/午夜狂熱，单页无翻页）；
+    6 分类（最新上架/特別推薦/感官世界/B級特區/大眾娛樂/午夜狂熱；分类页一次全量，框架 staticFullList 本地切页）；
     列表 `/vod` 首页行 + `/vod/category/<名>` 网格 + 搜索 `/cloud/search?term=` 同一套卡片解析；
     详情 `/cloud/vod/<id>` 只做元数据（ld+json 取标题/简介/封面/演员），m3u8 在
     `/cloud/play/<id>` 内联播放器 JS 里（`mdc-garageplay.cdn.hinet.net/.../playlist.m3u8?token=&expires=`，

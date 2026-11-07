@@ -414,9 +414,21 @@ async function handleList(site, req, res) {
   try {
     const html = await fetchHtml(site, url);
     const items = site.def.parseList(html);
-    const pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
-    const total = pagecount * limit;
-    const list = items.slice(0, limit).map((v) => ({
+    // staticFullList：上游分类页一次给全量、无站内翻页（如 kinostream），框架按 pg/limit 本地切页；
+    // 其他站保持原逻辑（每页 URL 不同，只取前 limit 条）。
+    let pagecount;
+    let total;
+    let pageItems;
+    if (site.def.staticFullList) {
+      pagecount = Math.max(1, Math.ceil(items.length / limit));
+      total = items.length;
+      pageItems = items.slice((pg - 1) * limit, pg * limit);
+    } else {
+      pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
+      total = pagecount * limit;
+      pageItems = items.slice(0, limit);
+    }
+    const list = pageItems.map((v) => ({
       vod_id: v.vid,
       vod_name: v.title,
       type_id: t ? Number(t) || t : site.def.CATS[0] ? site.def.CATS[0].type_id : 1,

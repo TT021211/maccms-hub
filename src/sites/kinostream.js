@@ -4,7 +4,7 @@
  * kinostream (KINOSTREAM 台湾正版 VOD) 适配器。
  * 无反爬（直连抓取，无 CF），SSR，结构简单：
  *   首页 /vod：.main_swiper 行（.category-wrapper h2 分类名 + .swiper-slide.card a[href=/cloud/vod/<id>]）
- *   分类 /vod/category/<urlencoded名>：.con_post 网格（单页，无翻页）
+ *   分类 /vod/category/<urlencoded名>：.con_post 网格（一次给全量，无站内翻页，框架本地切页）
  *   搜索 /cloud/search?term=<词>：同卡片结构
  *   详情 /cloud/vod/<id>：ld+json VideoObject（标题/简介/封面/演员）+ h5（級別/主演/導演），
  *     本页无播放器；播放 m3u8 在 /cloud/play/<id> 的内联播放器 JS 里
@@ -80,7 +80,7 @@ function parseList(html) {
   return videos;
 }
 
-// 单页分类，无翻页
+// 分类页一次给全量、无站内翻页（框架 staticFullList 按 pg/limit 本地切页）
 function parsePageCount(html, pg) {
   void html;
   return Math.max(1, parseInt(pg, 10) || 1);
@@ -183,6 +183,7 @@ module.exports = {
   publicBaseEnv: 'PUBLIC_BASE_KINOSTREAM',
   uaEnv: 'KINOSTREAM_UA',
   passthrough: true, // cdn.hinet 原生 m3u8 直传，框架原样透传
+  staticFullList: true, // 分类页一次给全量、无站内翻页，框架按 pg/limit 本地切页
   skipHtmlCache: true, // 详情 HTML 内嵌短效 token，不缓存
   detailTtlMs: 3600 * 1000, // token 约 4 小时过期，详情缓存只保 1 小时
   CATS,
