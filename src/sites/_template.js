@@ -120,6 +120,12 @@ module.exports = {
   // useRelay: true —— 站点被 CF 拦截、VPS 直连拿不到字节时，
   //   fetchHtml 改走 ScraperAPI render 中转（需 SCRAPERAPI_KEY 环境变量，按次计费，
   //   网关侧并发排队 RELAY_MAX_CONCURRENT 默认 3）。直连站不要开。
+  //   参考 sites/bjcam.js：整站 CF 拦截但 player API 域可直连。
+  // directHosts: ['api.example.com'] —— useRelay 站点中可直连的主机白名单，
+  //   命中则该 URL 走直连（省中转费用与延迟），其余仍走中转。
+  // noCachePlayHtml: true —— 仅二跳子页（如短效 player JSON）跳过 html: 缓存、
+  //   每次现抓；列表/详情 HTML 照常缓存（配合 useRelay 省调用次数）。
+  //   整页都内嵌短效 token 的站继续用 skipHtmlCache（全部不缓存）。
   // 页面混淆（如 aqdlt 的 sojson）：在 parseList/parseDetail 开头先还原再 cheerio，
   //   参考 sites/aqdlt.js 的 deobfuscate()（vm 跑站点自己的解码桩 + document.write 劫持）。
   // expandDetailUrl(metaHtml, vid, base): 详情页只是个壳、真实播放地址在内嵌 iframe/子页时

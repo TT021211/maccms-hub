@@ -102,16 +102,28 @@ function relayRelease() {
   else relayRunning--;
 }
 
-async function fetchHtml(site, url) {
+async function fetchHtml(site, url, opts) {
   // skipHtmlCache：页面内嵌短效 token（如 kinostream 的 m3u8 token 约 4 小时过期），
-  // 缓存 HTML 等于缓存过期 token，必须每次现抓
-  const noCache = !!site.def.skipHtmlCache;
+  // 缓存 HTML 等于缓存过期 token，必须每次现抓；
+  // noCachePlayHtml：仅二跳子页（如 bjcam 的 player API JSON）不缓存，列表/详情 HTML 照常缓存。
+  // directHosts：useRelay 站点中不受 CF 拦截、可直连的主机（如 bjcam 的 player API 域），
+  //   走直连，省中转费用与延迟。
+  const noCache = !!site.def.skipHtmlCache || !!(opts && opts.noCache);
   if (!noCache) {
     const hit = cacheGet('html:' + url);
     if (hit) return hit;
   }
+  let useDirect = !site.def.useRelay;
+  if (site.def.useRelay && Array.isArray(site.def.directHosts)) {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (site.def.directHosts.some((h) => host === String(h).toLowerCase() || host.endsWith('.' + String(h).toLowerCase()))) {
+        useDirect = true;
+      }
+    } catch {}
+  }
   // 中转模式（CF 站）：走 ScraperAPI render，结果按原 URL 缓存
-  if (site.def.useRelay) {
+  if (!useDirect) {
     const relay = buildRelayUrl(url);
     if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
     await relayAcquire();
@@ -239,7 +251,8 @@ async function fetchPlayableHtml(site, vid) {
     try {
       const embedUrl = site.def.expandDetailUrl(metaHtml, vid, site.base);
       if (embedUrl && embedUrl !== metaUrl) {
-        const playHtml = await fetchHtml(site, embedUrl);
+        // 二跳子页默认跟随整站缓存策略；noCachePlayHtml 站（如 bjcam 的短效 player JSON）每次现抓
+        const playHtml = await fetchHtml(site, embedUrl, { noCache: !!site.def.noCachePlayHtml });
         return { metaHtml, playHtml };
       }
     } catch (e) {
@@ -641,4 +654,4 @@ if (require.main === module) {
   app.listen(PORT, () => console.log(`[maccms-hub] listening :${PORT} sites=${[...sites.keys()].join(',')}`));
 }
 
-module.exports = { app, sites, siteOf, DEFAULT_SITE, buildRelayUrl, __relayTest: { acquire: relayAcquire, release: relayRelease } };
+module.exports = { app, sites, siteOf, DEFAULT_SITE, buildRelayUrl, fetchHtml, __relayTest: { acquire: relayAcquire, release: relayRelease } };

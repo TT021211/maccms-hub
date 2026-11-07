@@ -29,6 +29,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | `src/sites/aqdlt.js` | aqdlt 专用适配器（13 分类，sojson 还原 + cdn.aqd-tv 原生 m3u8 直传） |
 | `src/sites/hohoj.js` | hohoj 专用适配器（13 分类，iframe 二跳 `/embed` + ggjav 原生 m3u8 直传，720P） |
 | `src/sites/kinostream.js` | KinoStream 适配器（6 分类，直连 SSR + cdn.hinet 原生 m3u8 直传，token 短效） |
+| `src/sites/bjcam.js` | bjcam 适配器（3 分类，整站 CF 拦截走中转 + player API 直连取 hls，流短效，见 6.22） |
 | `src/sites/_template.js` | 新站模板（复制填空，见第 8 节） |
 | `test/smoke.js` | 离线冒烟测试（`npm test`）：适配器解析 + 路由回归 |
 | `Dockerfile` | `node:20-alpine` + `ffmpeg`，`npm ci --omit=dev`（**必须同时 COPY package.json + package-lock.json**） |
@@ -39,7 +40,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 `<KEY>_BASE`（如 `HANIME_BASE`）、`CACHE_TTL`（默认 86400，列表/HTML 共用；详情独立上限 86400）、
 `PUBLIC_BASE_<KEY>`（如 `PUBLIC_BASE_HANIME1=https://hanime1.acxou.hair`，不设则回退 watch 页）、
 `HLS_DIR`（默认 `/tmp/hls`）、`HLS_MAX_GB`（默认 8）、`SCRAPERAPI_KEY`
-（只给开 `useRelay` 的 CF 站用；当前三站均为直连，可不设）、
+（只给开 `useRelay` 的 CF 站用；bjcam 需要配，其他站可不设）、
 `RELAY_MAX_CONCURRENT`（中转并发上限，默认 3，试用 key 并发低不要调大）。
 
 > 2026-11-08 调参（提速向）：`CACHE_TTL` 默认 7200→86400（列表/HTML 共用；详情独立上限 24h，
@@ -223,6 +224,18 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     （框架新钩子，见 `server.js`，其他站不受影响）。MoonTV 后台加源
     `api: http://maccms-hub:3001/kinostream/api.php/provide/vod` 即可；
     内容多为受限内容，走通用源会被内容过滤，搜不到时先去搜索页“高级”里关过滤再试。
+22. **bjcam（2026-11-08，sexbjcam 录播站，`src/sites/bjcam.js`）**：WordPress retrotube，
+    3 分类（最新发布/KOREAN BJ/CHINESE GIRL，WP 标准翻页 `/page/N/`）；
+    列表 `/`（`?filter=latest`）+ `/category/<slug>/` + 搜索 `?s=` 同一套卡片解析，
+    vid 取 WP post id，详情走 `/?p=<id>` 短链；
+    详情 og 取标题/封面 + iframe `video.playerrecord.cfd/e/<code>`，
+    播放流经 `expandDetailUrl` 二跳 player API `/app/v1/play/<code>?embed=1&ref=` 的 JSON
+    （hls 优先、mp4 兜底，约 4 小时过期），`passthrough` 直传。
+    整站被 CF 拦截（Node 直连拿挑战页），`useRelay: true` 走 ScraperAPI render 中转，
+    需配 `SCRAPERAPI_KEY`；player API 域无 CF，用新钩子 `directHosts` 直连省中转费，
+    player JSON 用 `noCachePlayHtml` 每次现抓 + `detailTtlMs=1h`（框架新钩子，见 `server.js`，
+    其他站不受影响）。前端频道 `/bjcam`（BJ剧场）+ 导航 + 后台频道开关；
+    源地址由前端内置兜底从已配网关源派生（`getAvailableApiSites`），后台无需手动加源。
 
 ## 7. 加一个新站（5 分钟）
 

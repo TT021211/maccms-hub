@@ -57,6 +57,68 @@ async function main() {
   assert.strictEqual(d.episodes[0].name, '第1話');
   assert.deepStrictEqual(d.tags, ['學園']);
 
+  // 4b. bjcam 适配器（WP 录播站，离线 fixture 断言）
+  const bjcam = require('../src/sites/bjcam');
+  assert.strictEqual(bjcam.key, 'bjcam');
+  assert.strictEqual(bjcam.CATS.length, 3);
+  assert.strictEqual(bjcam.catById(2).genre, 'korean-bj');
+  assert.strictEqual(bjcam.useRelay, true, '整站 CF 拦截，必须走中转');
+  assert.deepStrictEqual(bjcam.directHosts, ['video.playerrecord.cfd']);
+  assert.strictEqual(bjcam.noCachePlayHtml, true);
+  assert.strictEqual(
+    bjcam.buildSearchUrl({ pg: 2 }, 'https://sexbjcam.com'),
+    'https://sexbjcam.com/page/2/?filter=latest'
+  );
+  assert.strictEqual(
+    bjcam.buildSearchUrl({ genre: 'korean-bj', pg: 3 }, 'https://sexbjcam.com'),
+    'https://sexbjcam.com/category/korean-bj/page/3/'
+  );
+  assert.strictEqual(
+    bjcam.buildSearchUrl({ query: 'panda', pg: 1 }, 'https://sexbjcam.com'),
+    'https://sexbjcam.com/?s=panda'
+  );
+  const bjListHtml = `
+    <article class="thumb-block video-preview-item post-386741" data-post-id="386741">
+      <a href="https://sexbjcam.com/2026/11/07/kbj26110788_pandaclass_20261103/" title="kbj26110788_PandaClass_20261103">
+        <div class="post-thumbnail-container"><img class="video-main-thumb" src="https://sexbjcam.com/wp-content/uploads/2026/11/kbj26110788.jpg"></div>
+        <span class="duration"><i class="fa fa-clock-o"></i>52:39</span>
+        <header class="entry-header"><span>kbj26110788_PandaClass_20261103</span></header>
+      </a>
+    </article>`;
+  const bjItems = bjcam.parseList(bjListHtml);
+  assert.strictEqual(bjItems.length, 1);
+  assert.strictEqual(bjItems[0].vid, '386741');
+  assert.strictEqual(bjItems[0].title, 'kbj26110788_PandaClass_20261103');
+  assert.ok(bjItems[0].pic.includes('kbj26110788.jpg'));
+  assert.strictEqual(bjItems[0].sub, '52:39');
+  const bjPageHtml = `<div class="pagination"><ul>
+    <li><a class="current">1</a></li>
+    <li><a href="https://sexbjcam.com/category/korean-bj/page/4/" class="inactive">4</a></li>
+  </ul></div>`;
+  assert.strictEqual(bjcam.parsePageCount(bjPageHtml, 1), 4);
+  assert.strictEqual(bjcam.detailUrl('386741', 'https://sexbjcam.com'), 'https://sexbjcam.com/?p=386741');
+  const bjMeta = `<html><head>
+      <meta property="og:title" content="kbj26110788_PandaClass_20261103">
+      <meta property="og:image" content="https://sexbjcam.com/wp-content/uploads/2026/11/kbj26110788.jpg">
+    </head><body>
+      <a href="/category/korean-bj/">KOREAN BJ</a>
+      <iframe src="https://video.playerrecord.cfd/e/tjocwawxobtv"></iframe>
+    </body></html>`;
+  const bjPlayUrl = bjcam.expandDetailUrl(bjMeta, '386741', 'https://sexbjcam.com');
+  assert.ok(
+    bjPlayUrl.startsWith('https://video.playerrecord.cfd/app/v1/play/tjocwawxobtv?embed=1&ref='),
+    bjPlayUrl
+  );
+  const bjDetail = bjcam.parseDetail(
+    bjMeta,
+    '386741',
+    JSON.stringify({ hls: 'https://cdn.example.com/x/master.m3u8', mp4: '', title: 't_merged', poster: '' })
+  );
+  assert.strictEqual(bjDetail.title, 'kbj26110788_PandaClass_20261103');
+  assert.strictEqual(bjDetail.episodes.length, 1);
+  assert.strictEqual(bjDetail.episodes[0].url, 'https://cdn.example.com/x/master.m3u8');
+  assert.deepStrictEqual(bjDetail.tags, ['KOREAN BJ']);
+
   // 5. 框架路由（离线断言，不碰上游）
   const { app } = require('../src/server');
   const srv = await new Promise((resolve) => {
@@ -133,6 +195,48 @@ async function main() {
   delete process.env.SCRAPERAPI_KEY;
   assert.strictEqual(buildRelayUrl('https://example.com/'), null);
   if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
+
+  // 7. fetchHtml 新钩子（localhost 桩，离线可测）：directHosts 命中走直连、
+  //    不命中走中转；noCache 跳过 html: 缓存
+  const http = require('http');
+  let stubHits = 0;
+  const stub = http.createServer((req, res) => {
+    stubHits++;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ hls: 'https://cdn.example.com/x/master.m3u8' }));
+  });
+  await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+  const stubPort = stub.address().port;
+  const stubUrl = `http://127.0.0.1:${stubPort}/app/v1/play/abc?embed=1`;
+  const mkSite = (def) => ({
+    key: 't', base: `http://127.0.0.1:${stubPort}`, publicBase: '', def,
+  });
+  const directDef = {
+    useRelay: true, directHosts: ['127.0.0.1'], UA_LIST: [], headersFor: () => ({}),
+  };
+  process.env.SCRAPERAPI_KEY = 'testkey123';
+  const { fetchHtml } = require('../src/server');
+  stubHits = 0;
+  const d1 = JSON.parse(await fetchHtml(mkSite(directDef), stubUrl));
+  assert.strictEqual(d1.hls, 'https://cdn.example.com/x/master.m3u8', '命中 directHosts 必须直连（中转假 key 会失败）');
+  assert.strictEqual(stubHits, 1);
+  const d2 = await fetchHtml(mkSite(directDef), stubUrl);
+  assert.strictEqual(stubHits, 1, '默认应命中 html: 缓存');
+  assert.ok(d2.includes('master.m3u8'));
+  await fetchHtml(mkSite(directDef), stubUrl, { noCache: true });
+  assert.strictEqual(stubHits, 2, 'noCache 应每次现抓');
+  // 不命中 directHosts → 走中转（假 key 下必抛，绝不能回落到桩内容；换未缓存过的 URL，避免上面直连写进的缓存干扰）
+  let relayAttempted = false;
+  try {
+    const r = await fetchHtml(mkSite({ useRelay: true, UA_LIST: [], headersFor: () => ({}) }), stubUrl + '&other=1');
+    relayAttempted = !String(r).includes('master.m3u8');
+  } catch {
+    relayAttempted = true;
+  }
+  assert.ok(relayAttempted, '未命中 directHosts 必须走中转');
+  delete process.env.SCRAPERAPI_KEY;
+  if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
+  stub.close();
 
   // 8. aqdlt 适配器（sojson 还原 + 原生 m3u8 直传）
   const aqdlt = require('../src/sites/aqdlt');
