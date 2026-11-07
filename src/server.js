@@ -103,8 +103,13 @@ function relayRelease() {
 }
 
 async function fetchHtml(site, url) {
-  const hit = cacheGet('html:' + url);
-  if (hit) return hit;
+  // skipHtmlCache：页面内嵌短效 token（如 kinostream 的 m3u8 token 约 4 小时过期），
+  // 缓存 HTML 等于缓存过期 token，必须每次现抓
+  const noCache = !!site.def.skipHtmlCache;
+  if (!noCache) {
+    const hit = cacheGet('html:' + url);
+    if (hit) return hit;
+  }
   // 中转模式（missav 这类 CF 站）：走 ScraperAPI render，结果按原 URL 缓存
   if (site.def.useRelay) {
     const relay = buildRelayUrl(url);
@@ -117,7 +122,7 @@ async function fetchHtml(site, url) {
       const res = await fetch(relay, { signal: ctrl.signal });
       if (!res.ok) throw new Error(`relay http ${res.status} for ${url}`);
       const text = await res.text();
-      cacheSet('html:' + url, text);
+      if (!noCache) cacheSet('html:' + url, text);
       return text;
     } finally {
       clearTimeout(timer);
@@ -138,7 +143,7 @@ async function fetchHtml(site, url) {
       }
       if (!res.ok) throw new Error(`upstream http ${res.status} for ${url}`);
       const text = await res.text();
-      cacheSet('html:' + url, text);
+      if (!noCache) cacheSet('html:' + url, text);
       return text;
     } catch (e) {
       lastErr = e;
@@ -513,7 +518,7 @@ async function handleDetail(site, req, res) {
               vod_tag: (d.tags || []).join(','),
               vod_class: (d.tags || []).join(','),
             };
-            cacheSet(ckey, vod, Math.min(CACHE_TTL, 86400 * 1000));
+            cacheSet(ckey, vod, site.def.detailTtlMs || Math.min(CACHE_TTL, 86400 * 1000));
             // 轻微限流
             await new Promise((r) => setTimeout(r, 120));
             return vod;

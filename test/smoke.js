@@ -215,6 +215,72 @@ async function main() {
     'https://cdn/x/playlist.m3u8'
   );
 
+  // 10. kinostream 适配器（直连 SSR + 原生 m3u8 直传，token 短效）
+  const kino = require('../src/sites/kinostream');
+  assert.strictEqual(kino.key, 'kinostream');
+  assert.strictEqual(kino.passthrough, true);
+  assert.strictEqual(kino.skipHtmlCache, true);
+  assert.strictEqual(kino.CATS.length, 6);
+  assert.strictEqual(kino.catById(1).type_name, '最新上架');
+  assert.strictEqual(
+    kino.buildSearchUrl({ query: '鯊瘋', pg: 1 }, 'https://kinostream.com'),
+    'https://kinostream.com/cloud/search?term=%E9%AF%8A%E7%98%8B'
+  );
+  assert.strictEqual(
+    kino.buildSearchUrl({ genre: '最新上架', pg: 2 }, 'https://kinostream.com'),
+    'https://kinostream.com/vod/category/%E6%9C%80%E6%96%B0%E4%B8%8A%E6%9E%B6'
+  );
+  assert.strictEqual(
+    kino.buildSearchUrl({ pg: 1 }, 'https://kinostream.com'),
+    'https://kinostream.com/vod'
+  );
+  assert.strictEqual(
+    kino.detailUrl('5239', 'https://kinostream.com'),
+    'https://kinostream.com/cloud/vod/5239'
+  );
+  assert.strictEqual(kino.parsePageCount('<div>无翻页</div>', 3), 3);
+  // 分类网格卡（img src 直链 + h3/h4）
+  const kItems = kino.parseList(
+    '<div class="con_post"><div class="con_post_box">' +
+      '<img src="https://flicksbank.console360.net/images/5239/default.jpg" alt="鯊瘋了">' +
+      '<a href="/cloud/vod/5239"><div><h3>鯊瘋了</h3><h4>Shark Frenzy</h4></div></a>' +
+      '</div></div>' +
+      '<div class="con_post"><div class="con_post_box">' +
+      '<img src="https://flicksbank.console360.net/images/5239/default.jpg" alt="鯊瘋了">' +
+      '<a href="/cloud/vod/5239"><div><h3>鯊瘋了</h3></div></a>' +
+      '</div></div>'
+  );
+  assert.strictEqual(kItems.length, 1, JSON.stringify(kItems));
+  assert.strictEqual(kItems[0].vid, '5239');
+  assert.strictEqual(kItems[0].title, '鯊瘋了');
+  assert.strictEqual(kItems[0].pic, 'https://flicksbank.console360.net/images/5239/default.jpg');
+  // 首页行卡（img data-src 懒加载 + h1）
+  const kHome = kino.parseList(
+    '<div class="swiper-slide card" data-id="5198"><a href="/cloud/vod/5198">' +
+      '<img data-src="https://flicksbank.console360.net/images/5198/default.jpg">' +
+      '<div class="card_cover_inner"><h1>外星人：揭密日</h1></div></a></div>'
+  );
+  assert.strictEqual(kHome.length, 1);
+  assert.strictEqual(kHome[0].vid, '5198');
+  assert.strictEqual(kHome[0].title, '外星人：揭密日');
+  assert.ok(kHome[0].pic.includes('5198/default.jpg'));
+  // 详情：ld+json + 内联 m3u8
+  const kDetail =
+    '<html><head><script type="application/ld+json">' +
+    '{"@type":"VideoObject","name":"鯊瘋了 Shark Frenzy - KINOSTREAM","description":"简介",' +
+    '"thumbnailUrl":"https://flicksbank.console360.net/images/5239/default.jpg","actor":"某演员"}' +
+    '</script></head><body><div class="movie_box_inner"><h5>級別 | 輔導十五歲級</h5></div>' +
+    '<script>player.load("https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1");</script></body></html>';
+  const kD = kino.parseDetail(kDetail, '5239');
+  assert.strictEqual(kD.title, '鯊瘋了 Shark Frenzy');
+  assert.strictEqual(kD.genreName, '輔導十五歲級');
+  assert.strictEqual(kD.sources[0].src, 'https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1');
+  assert.strictEqual(kD.episodes[0].url, 'https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1');
+  // 无 m3u8（非放行出口）：元数据照出，选集为空
+  const kD2 = kino.parseDetail('<html><body><h2>某片</h2></body></html>', '1');
+  assert.strictEqual(kD2.title, '某片');
+  assert.strictEqual(kD2.episodes.length, 0);
+
   console.log('smoke OK: adapter + framework routes');
 }
 

@@ -125,4 +125,8 @@ module.exports = {
   // expandDetailUrl(metaHtml, vid, base): 详情页只是个壳、真实播放地址在内嵌 iframe/子页时
   //   （如 hohoj 的 /embed?id=），返回子页地址，框架自动跟进抓取并把子页 HTML 作为
   //   parseDetail 的第三个参数传入；返回 null/与详情页相同则不跟进。
+  // skipHtmlCache: true —— 详情 HTML 内嵌短效 token（如 kinostream 的 m3u8 token 约 4 小时过期），
+  //   缓存 HTML 等于缓存过期 token，框架对该站跳过 html: 缓存（每次现抓）。
+  // detailTtlMs: 3600*1000 —— 详情信封缓存 TTL 覆盖（默认 min(CACHE_TTL, 24h)），
+  //   短效 token 站设短一点（如 1 小时），过期即重抓换新 token。
 };
