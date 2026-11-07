@@ -264,14 +264,19 @@ async function main() {
   assert.strictEqual(kHome[0].vid, '5198');
   assert.strictEqual(kHome[0].title, '外星人：揭密日');
   assert.ok(kHome[0].pic.includes('5198/default.jpg'));
-  // 详情：ld+json + 内联 m3u8
+  // 详情：ld+json + 内联 m3u8（m3u8 从 /cloud/play 子页提，框架经 expandDetailUrl 跟进）
+  assert.strictEqual(
+    kino.expandDetailUrl('<h2>鯊瘋了</h2>', '5239', 'https://kinostream.com'),
+    'https://kinostream.com/cloud/play/5239'
+  );
   const kDetail =
     '<html><head><script type="application/ld+json">' +
     '{"@type":"VideoObject","name":"鯊瘋了 Shark Frenzy - KINOSTREAM","description":"简介",' +
     '"thumbnailUrl":"https://flicksbank.console360.net/images/5239/default.jpg","actor":"某演员"}' +
-    '</script></head><body><div class="movie_box_inner"><h5>級別 | 輔導十五歲級</h5></div>' +
-    '<script>player.load("https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1");</script></body></html>';
-  const kD = kino.parseDetail(kDetail, '5239');
+    '</script></head><body><div class="movie_box_inner"><h5>級別 | 輔導十五歲級</h5></div></body></html>';
+  const kPlay =
+    '<html><body><script>player.load("https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1");</script></body></html>';
+  const kD = kino.parseDetail(kDetail, '5239', kPlay);
   assert.strictEqual(kD.title, '鯊瘋了 Shark Frenzy');
   assert.strictEqual(kD.genreName, '輔導十五歲級');
   assert.strictEqual(kD.sources[0].src, 'https://mdc-garageplay.cdn.hinet.net/x/playlist.m3u8?token=abc&expires=1');

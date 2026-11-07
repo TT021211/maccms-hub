@@ -73,7 +73,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | hanime1 | 直连抓取 | mp4 → `/h/` ffmpeg 转封装 | 老服务原样迁移 |
 | aqdlt 爱情岛 | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框；m3u8 无 CORS 头，须开 MoonTV 源 proxyMode |
 | hohoj | 直连抓取（无 CF） | ggjav 原生 m3u8 直传（`passthrough`，单码率 720p） | 详情页是壳，真实地址在内嵌 `/embed?id=` 子页（框架 `expandDetailUrl` 自动跟进）；m3u8 自带 CORS 头，直连可播 |
-| kinostream | 直连抓取（无 CF） | cdn.hinet 原生 m3u8 直传（`passthrough`） | 见 6.21：token 短效 + 出口 IP 相关；内容多为限制级，走通用源会被黄滤，见备注 |
+| kinostream | 直连抓取（无 CF） | cdn.hinet 原生 m3u8 直传（`passthrough`） | 见 6.21：详情二跳 `/cloud/play` 取流、token 短效；内容多为限制级，走通用源会被黄滤，见备注 |
 
 直传站列表不带 `vod_play_url`（聚合搜索会被 MoonTV 按 `episodes.length>0` 过滤），
 只走独立频道/源站寻片；详情自带 m3u8，播放页直连详情即可。
@@ -219,11 +219,10 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 21. **kinostream（2026-11-08，台湾正版 VOD，`src/sites/kinostream.js`）**：无反爬，直连 SSR，
     6 分类（最新上架/特別推薦/感官世界/B級特區/大眾娛樂/午夜狂熱，单页无翻页）；
     列表 `/vod` 首页行 + `/vod/category/<名>` 网格 + 搜索 `/cloud/search?term=` 同一套卡片解析；
-    详情 `/cloud/vod/<id>` 从 ld+json 取标题/简介/封面/演员，m3u8 从内联播放器 JS 正则提
-    （`mdc-garageplay.cdn.hinet.net/.../playlist.m3u8?token=&expires=`，约 4 小时过期），
-    `passthrough` 直传。两个配套坑：① m3u8 只对特定出口 IP 下发（本站限台湾；
-    机房/US 出口拿到的详情页没有播放器块），拿不到时详情照出、选集为空并打一行 warn，
-    不整单失败；② token 短效：`skipHtmlCache`（HTML 不缓存）+ `detailTtlMs=1h`
+    详情 `/cloud/vod/<id>` 只做元数据（ld+json 取标题/简介/封面/演员），m3u8 在
+    `/cloud/play/<id>` 内联播放器 JS 里（`mdc-garageplay.cdn.hinet.net/.../playlist.m3u8?token=&expires=`，
+    约 4 小时过期），框架经 `expandDetailUrl` 自动二跳抓取（hohoj 同款），
+    `passthrough` 直传。配套：`skipHtmlCache`（两页 HTML 都不缓存）+ `detailTtlMs=1h`
     （框架新钩子，见 `server.js`，其他站不受影响）。MoonTV 后台加源
     `api: http://maccms-hub:3001/kinostream/api.php/provide/vod` 即可；
     内容多为限制级，走通用源会被黄色过滤，搜不到时先去搜索页“高级”里关黄滤再试。

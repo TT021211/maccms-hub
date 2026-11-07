@@ -7,13 +7,12 @@
  *   分类 /vod/category/<urlencoded名>：.con_post 网格（单页，无翻页）
  *   搜索 /cloud/search?term=<词>：同卡片结构
  *   详情 /cloud/vod/<id>：ld+json VideoObject（标题/简介/封面/演员）+ h5（級別/主演/導演），
- *     播放 m3u8 藏在内联播放器 JS 里（bitrates.hls / player.load），token 约 4 小时过期。
+ *     本页无播放器；播放 m3u8 在 /cloud/play/<id> 的内联播放器 JS 里
+ *     （bitrates.hls / player.load），框架经 expandDetailUrl 自动跟进抓取。
+ *     token 约 4 小时过期。
  *
- * 两个关键坑（见 README 6.21）：
- * 1. m3u8 只对特定出口 IP 下发（本站限台湾；机房 IP 拿到的详情页没有播放器块），
- *    拿不到时 episodes 为空（MoonTV 会过滤掉，只走能播的），日志会写一行。
- * 2. token 短效：开 skipHtmlCache（HTML 不缓存）+ detailTtlMs 1 小时，
- *    详情缓存只保标题封面这类静态字段，过期即重抓换新 token。
+ * 关键坑（见 README 6.21）：token 短效，开 skipHtmlCache（两页 HTML 都不缓存）+
+ * detailTtlMs 1 小时，详情缓存只保标题封面这类静态字段，过期即重抓换新 token。
  */
 
 const cheerio = require('cheerio'); // eslint-disable-line
@@ -91,12 +90,18 @@ function detailUrl(vid, base) {
   return `${base}/cloud/vod/${encodeURIComponent(String(vid))}`;
 }
 
+// 详情页只是元数据壳，真实 m3u8 在 /cloud/play/<id> 内联播放器 JS 里，框架自动跟进
+function expandDetailUrl(metaHtml, vid, base) {
+  void metaHtml;
+  return `${base}/cloud/play/${encodeURIComponent(String(vid))}`;
+}
+
 function extractM3u8(html) {
   const m = String(html || '').match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
   return m ? m[0] : '';
 }
 
-function parseDetail(html, vid) {
+function parseDetail(html, vid, playHtml) {
   const $ = cheerio.load(html || '');
   // 首选 ld+json VideoObject（标题/简介/封面/演员一次齐）
   let title = '';
@@ -153,10 +158,10 @@ function parseDetail(html, vid) {
     if (a) actor = a.replace(/^主演\s*\|\s*/, '').trim();
   }
 
-  const m3u8 = extractM3u8(html);
+  const m3u8 = extractM3u8(playHtml !== undefined ? playHtml : html);
   if (!m3u8) {
-    // 预期内：非 TW/机房出口拿到的详情页没有播放器块（见文件头注释）
-    console.warn(`[kinostream] ${vid} 未提纯到 m3u8（出口 IP 可能不在放行范围），本条无可播选集`);
+    // 播放页无 m3u8（站内下架/改版），本条无可播选集，不整单失败
+    console.warn(`[kinostream] ${vid} 未提纯到 m3u8，本条无可播选集`);
   }
   return {
     title,
@@ -188,6 +193,7 @@ module.exports = {
   parseList,
   parsePageCount,
   detailUrl,
+  expandDetailUrl,
   extractM3u8,
   parseDetail,
 };
