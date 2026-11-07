@@ -207,6 +207,14 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     与内置重复 path 的跳过。验证：`?ac=list` 回 586 个分类；`t=2011（巨乳）pg=1/2` 各 20 条
     且不重复。MoonTVPlus 侧零改动（分类/视频接口自动透出，频道胶囊行横滑浏览）。注意频道页
     胶囊一次渲染五百多个按钮，低端机首屏会重一点，可接受。
+20. **HoHoJ 女优墙 + 全站导航分组（2026-11-07）**：`/all_models`（order=popular/views，`p` 翻页）
+    解析头像墙，`/model?id=N` 复用列表解析 + changePage 分页；网关新增 `ac=models` /
+    `ac=model-videos`（MacCMS 信封，女优条目 `vod_id=model-<mid>`），`server.js` 经
+    `handleModels` 可选钩子分发。里番（首页/搜索页抓 `search?genre=` 链接，CF 拦截时回退内置 13 个，
+    本地 403 属正常）与爱情岛（首页 sojson 还原后取 7 地区 + 68 标签，`cat-<slug>` /
+    `tag-<slug>`）同样并入导航。missav 不动。所有 CATS 条目带 `group` 字段
+    （精選/類型/主題/標籤/地區/分类），`?ac=list` 的 class 原样透出，前端面包屑按组展开。
+    `npm test` 里 CATS 数量断言已放宽为 `>= 13`（在线会涨，离线回退）。
 
 ## 7. 加一个新站（5 分钟）
 
@@ -229,4 +237,6 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
   （约 -5.6 万行），保留搜索/豆瓣/播放/收藏/下载/四频道；`admin` 后台没动。
 - 通用自建源新建 `/browse` 页（源切换 + 真实 `?ac=list` 父/子分类 + 网格 + 去重收敛的下滑加载），
   导航“源浏览”；`api/source-search` 恢复（分类补 `?yellowFilter=`，videos 补 `pageCount` 兜底）。
+- HoHoJ 女优墙（影片/女优切换＋头像圆墙＋作品流）与四频道＋`/browse` 统一分类面包屑
+  （选中路径＋共 N 个分类，点一下按组展开；小列表自动平铺）；频道副标题分类数改为动态计数。
 - 联动：本网关 hohoj 翻页修复（见 6.18）必须 `push → VPS pull`，否则 HoHoJ 频道翻页还是死的。
