@@ -102,12 +102,61 @@ function relayRelease() {
   else relayRunning--;
 }
 
+async function fetchDirectHtml(site, url) {
+  const uaList = (site.def.UA_LIST || []).filter(Boolean);
+  const uas = (uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36']).slice(0, 2);
+  let lastErr = null;
+  for (const ua of uas) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(url, { headers: site.def.headersFor(ua, site.base), signal: ctrl.signal });
+      if (res.status === 403 || res.status === 503) {
+        lastErr = new Error(`upstream http ${res.status} for ${url}`);
+        // CF 挑战页带 cf-mitigated: challenge 标记，relayOnChallenge 站据此转中转
+        try {
+          if (res.headers && res.headers.get('cf-mitigated') === 'challenge') {
+            lastErr.isCfChallenge = true;
+          }
+        } catch {}
+        continue; // 换 UA 重试 (CF 指纹拦截)
+      }
+      if (!res.ok) throw new Error(`upstream http ${res.status} for ${url}`);
+      return await res.text();
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr || new Error('fetch failed for ' + url);
+}
+
+async function fetchRelayHtml(site, url) {
+  const relay = buildRelayUrl(url);
+  if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
+  await relayAcquire();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 150000);
+  try {
+    console.log(`[relay][${site.key}] ${url.slice(0, 120)}`);
+    const res = await fetch(relay, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`relay http ${res.status} for ${url}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+    relayRelease();
+  }
+}
+
 async function fetchHtml(site, url, opts) {
   // skipHtmlCache：页面内嵌短效 token（如 kinostream 的 m3u8 token 约 4 小时过期），
   // 缓存 HTML 等于缓存过期 token，必须每次现抓；
   // noCachePlayHtml：仅二跳子页（如 bjcam 的 player API JSON）不缓存，列表/详情 HTML 照常缓存。
   // directHosts：useRelay 站点中不受 CF 拦截、可直连的主机（如 bjcam 的 player API 域），
   //   走直连，省中转费用与延迟。
+  // relayOnChallenge：先直连试一次，遇 CF 挑战（cf-mitigated: challenge）再转中转；
+  //   直连能过（如换了干净 IP）的部署不用配 key，挑战时才需要 SCRAPERAPI_KEY。
   const noCache = !!site.def.skipHtmlCache || !!(opts && opts.noCache);
   if (!noCache) {
     const hit = cacheGet('html:' + url);
@@ -124,46 +173,23 @@ async function fetchHtml(site, url, opts) {
   }
   // 中转模式（CF 站）：走 ScraperAPI render，结果按原 URL 缓存
   if (!useDirect) {
-    const relay = buildRelayUrl(url);
-    if (!relay) throw new Error('relay enabled but SCRAPERAPI_KEY is missing');
-    await relayAcquire();
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 150000);
-    try {
-      console.log(`[relay][${site.key}] ${url.slice(0, 120)}`);
-      const res = await fetch(relay, { signal: ctrl.signal });
-      if (!res.ok) throw new Error(`relay http ${res.status} for ${url}`);
-      const text = await res.text();
-      if (!noCache) cacheSet('html:' + url, text);
-      return text;
-    } finally {
-      clearTimeout(timer);
-      relayRelease();
-    }
-  }
-  const uaList = (site.def.UA_LIST || []).filter(Boolean);
-  const uas = (uaList.length ? uaList : ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36']).slice(0, 2);
-  let lastErr = null;
-  for (const ua of uas) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
-    try {
-      const res = await fetch(url, { headers: site.def.headersFor(ua, site.base), signal: ctrl.signal });
-      if (res.status === 403 || res.status === 503) {
-        lastErr = new Error(`upstream http ${res.status} for ${url}`);
-        continue; // 换 UA 重试 (CF 指纹拦截)
+    if (site.def.relayOnChallenge) {
+      try {
+        const text = await fetchDirectHtml(site, url);
+        if (!noCache) cacheSet('html:' + url, text);
+        return text;
+      } catch (e) {
+        if (!e || !e.isCfChallenge) throw e;
+        console.log(`[relay][${site.key}] 直连遇 CF 挑战，转中转: ${url.slice(0, 120)}`);
       }
-      if (!res.ok) throw new Error(`upstream http ${res.status} for ${url}`);
-      const text = await res.text();
-      if (!noCache) cacheSet('html:' + url, text);
-      return text;
-    } catch (e) {
-      lastErr = e;
-    } finally {
-      clearTimeout(timer);
     }
+    const text = await fetchRelayHtml(site, url);
+    if (!noCache) cacheSet('html:' + url, text);
+    return text;
   }
-  throw lastErr || new Error('fetch failed for ' + url);
+  const text = await fetchDirectHtml(site, url);
+  if (!noCache) cacheSet('html:' + url, text);
+  return text;
 }
 
 function ffExec(args, timeoutMs = 600000) {

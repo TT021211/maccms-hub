@@ -173,7 +173,8 @@ module.exports = {
   publicBaseEnv: 'PUBLIC_BASE_BJCAM',
   uaEnv: 'BJCAM_UA',
   passthrough: true, // 录播站原生 hls/mp4 直传，框架原样透传
-  useRelay: true, // 整站被 CF 拦截，Node 直连拿挑战页，列表/详情 HTML 走 ScraperAPI render 中转
+  useRelay: true, // 整站被 CF 拦截时走 ScraperAPI render 中转（需 SCRAPERAPI_KEY）
+  relayOnChallenge: true, // 先直连试一次（换干净 IP 可能直接过，免 key 零成本），遇 CF 挑战再转中转
   directHosts: ['video.playerrecord.cfd'], // player API 域无 CF，可直连（省中转费）
   noCachePlayHtml: true, // player JSON 含短效流（约 4 小时），二跳每次现抓；列表/详情 HTML 照常缓存
   detailTtlMs: 3600 * 1000, // 流约 4 小时过期，详情缓存只保 1 小时

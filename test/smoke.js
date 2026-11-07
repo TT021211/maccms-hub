@@ -202,6 +202,11 @@ async function main() {
   let stubHits = 0;
   const stub = http.createServer((req, res) => {
     stubHits++;
+    if (req.url.startsWith('/challenged')) {
+      res.writeHead(403, { 'cf-mitigated': 'challenge', 'content-type': 'text/html' });
+      res.end('<html><head><title>Just a moment...</title></head></html>');
+      return;
+    }
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ hls: 'https://cdn.example.com/x/master.m3u8' }));
   });
@@ -234,7 +239,19 @@ async function main() {
     relayAttempted = true;
   }
   assert.ok(relayAttempted, '未命中 directHosts 必须走中转');
+  // relayOnChallenge：直连能过则直接用（不花中转）；遇挑战标记才转中转
+  const autoSite = mkSite({ useRelay: true, relayOnChallenge: true, UA_LIST: [], headersFor: () => ({}) });
+  stubHits = 0;
+  const a1 = await fetchHtml(autoSite, stubUrl + '&auto=1');
+  assert.ok(String(a1).includes('master.m3u8'), '直连能过时不应中转');
+  let challengedToRelay = false;
+  try {
+    await fetchHtml(autoSite, `http://127.0.0.1:${stubPort}/challenged`);
+  } catch (e) {
+    challengedToRelay = /SCRAPERAPI_KEY is missing|relay http|fetch failed/i.test(String((e && e.message) || e));
+  }
   delete process.env.SCRAPERAPI_KEY;
+  assert.ok(challengedToRelay, '遇 CF 挑战标记必须转中转');
   if (prevKey !== undefined) process.env.SCRAPERAPI_KEY = prevKey;
   stub.close();
 

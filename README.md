@@ -231,8 +231,10 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     详情 og 取标题/封面 + iframe `video.playerrecord.cfd/e/<code>`，
     播放流经 `expandDetailUrl` 二跳 player API `/app/v1/play/<code>?embed=1&ref=` 的 JSON
     （hls 优先、mp4 兜底，约 4 小时过期），`passthrough` 直传。
-    整站被 CF 拦截（Node 直连拿挑战页），`useRelay: true` 走 ScraperAPI render 中转，
-    需配 `SCRAPERAPI_KEY`；player API 域无 CF，用新钩子 `directHosts` 直连省中转费，
+    整站被 CF 拦截（Node 直连拿挑战页；Python/IDM 能过，系 TLS 指纹差异），
+    `useRelay: true` + `relayOnChallenge: true`：先直连试一次（换干净 IP 可能直接过，
+    免 key 零成本），遇挑战标记（cf-mitigated）再转 ScraperAPI render 中转，
+    挑战时才需要 `SCRAPERAPI_KEY`；player API 域无 CF，用新钩子 `directHosts` 直连省中转费，
     player JSON 用 `noCachePlayHtml` 每次现抓 + `detailTtlMs=1h`（框架新钩子，见 `server.js`，
     其他站不受影响）。前端频道 `/bjcam`（BJ剧场）+ 导航 + 后台频道开关；
     源地址由前端内置兜底从已配网关源派生（`getAvailableApiSites`），后台无需手动加源。

@@ -121,6 +121,8 @@ module.exports = {
   //   fetchHtml 改走 ScraperAPI render 中转（需 SCRAPERAPI_KEY 环境变量，按次计费，
   //   网关侧并发排队 RELAY_MAX_CONCURRENT 默认 3）。直连站不要开。
   //   参考 sites/bjcam.js：整站 CF 拦截但 player API 域可直连。
+  // relayOnChallenge: true —— 配合 useRelay，先直连试一次，遇 CF 挑战
+  //   （cf-mitigated: challenge）再转中转；直连能过的部署不用配 key。
   // directHosts: ['api.example.com'] —— useRelay 站点中可直连的主机白名单，
   //   命中则该 URL 走直连（省中转费用与延迟），其余仍走中转。
   // noCachePlayHtml: true —— 仅二跳子页（如短效 player JSON）跳过 html: 缓存、
