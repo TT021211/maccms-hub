@@ -1,7 +1,7 @@
 # maccms-hub 交接文档（线上在用）
 
 把任意刮削站实时转成 **MacCMS V10 `provide/vod` 采集接口** + **HLS 播放链路**，
-供 MoonTVPlus（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
+供 MoonPlayer（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
 含 `/hanime` / `/aqdlt` / `/hohoj` / `/kinostream` 四个专用频道）聚合搜索与播放。
 
 仓库：`https://github.com/TT021211/maccms-hub`（Public；push 即云构建 `ghcr.io/tt021211/maccms-hub:latest`，amd64+arm64）
@@ -103,8 +103,8 @@ nginx（`/opt/nginx/conf.d/hanime1.acxou.hair.conf`）：`proxy_pass http://macc
 改完 `docker exec nginx-proxy nginx -t && docker exec nginx-proxy nginx -s reload`。
 证书沿用老流程（`certbot --config-dir /opt/nginx/certbot/conf`，见老文档）。
 
-MoonTVPlus 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime`
-`/aqdlt` `/hohoj` `/kinostream` 四个专用频道，代码在 `https://github.com/TT021211/MoonTVPlus`）：
+MoonPlayer 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/hanime`
+`/aqdlt` `/hohoj` `/kinostream` 四个专用频道，代码在 `https://github.com/TT021211/MoonPlayer`）：
 
 ```
 源管理 → 自定义源：
@@ -144,7 +144,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
    现在两边 compose 都用 `external: true` 挂网，不用再手连。
 3. **空卷陷阱**：compose 里写短名 `hls-cache:` 会新建空卷（`maccms-hub_hls-cache`），切片全重切。
    必须 `external` 指回老卷（`hanime1-maccms_hls-cache`）。`docker volume ls | grep hls` 确认。
-4. **GHCR 403 denied**：fork 里 workflow 写死了官方命名空间。教训：本仓库及 MoonTVPlus 的
+4. **GHCR 403 denied**：fork 里 workflow 写死了官方命名空间。教训：本仓库及 MoonPlayer 的
    workflow 必须指向 `tt021211`，`lite` 那份也一样（曾因此失败一次）。
 5. **`npm ci` 失败 exit 1**：`npm ci` 必须同时看到 `package.json + package-lock.json`。
    Dockerfile 里 `COPY package.json package-lock.json ./` 两份都要拷（曾因此失败一次）。
@@ -194,7 +194,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 18. **hohoj 翻页双坑（2026-11-05，本地实测打通）**：① 站内翻页参数是 `p`
     （分页全是 `javascript:changePage(N)` 跳转），网关之前按 `page=` 发，
     2 页以后永远回第一页。`buildSearchUrl` 已改 `p=${pg}`。② `parsePageCount` 原来只认
-    `共N页/?page=/page/`，在 hohoj 眼里恒等于当前页 → MoonTVPlus 侧 `page < pageCount`
+    `共N页/?page=/page/`，在 hohoj 眼里恒等于当前页 → MoonPlayer 侧 `page < pageCount`
     永假，下滑直接判死。已加 `changePage\((\d+)\)` 识别（上限 500）。
     验证：`t=2 pg=2` 回 20 条新数据、`pagecount:500`（之前 `pagecount:1`）。
     教训：新站先拿 `?ac=videolist&t=X&pg=2` 对新旧两页的 vod_id，有重复/页数不动就是翻页参数错了。
@@ -203,7 +203,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     在列表/详情前把导航并进 CATS（24 小时缓存，失败回退内置；`server.js` 经可选钩子调用，
     不影响其他站）。动态 id：`main_ctg` 缺的 4 个 → `1000+N`，`ctg` 全量 → `2000+N`，
     与内置重复 path 的跳过。验证：`?ac=list` 回 586 个分类；`t=2011 pg=1/2` 各 20 条
-    且不重复。MoonTVPlus 侧零改动（分类/视频接口自动透出，频道胶囊行横滑浏览）。注意频道页
+    且不重复。MoonPlayer 侧零改动（分类/视频接口自动透出，频道胶囊行横滑浏览）。注意频道页
     胶囊一次渲染五百多个按钮，低端机首屏会重一点，可接受。
 20. **hohoj 人物墙 + 全站导航分组（2026-11-07）**：`/all_models`（order=popular/views，`p` 翻页）
     解析头像墙，`/model?id=N` 复用列表解析 + changePage 分页；网关新增 `ac=models` /
@@ -233,7 +233,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 4. MoonTV 后台加源：`api: http://maccms-hub:3001/xxx/api.php/provide/vod`。
 5. 内网验证：`.../xxx/api.php/provide/vod/?ac=list&t=1&pg=1` 有 `list[].vod_play_url` 且以 `.m3u8` 结尾。
 
-## 8. MoonTVPlus 爆改记录（2026-11-05，仓库 `TT021211/MoonTVPlus`，与本网关联动）
+## 8. MoonPlayer 爆改记录（2026-11-05，仓库 `TT021211/MoonPlayer`，与本网关联动）
 
 - 主题：`src/app/mutefun-theme.css`（mutefun.tv 风：浅底 + 红橙主色），`layout.tsx` 挂载。
 - 播放页：工具条只留下载/复制链接/App跳转/去广告/超分+选集；手势为单击显栏、双击中区暂停、双击两侧快退/快进；

@@ -285,7 +285,7 @@ function fmtTime() {
 }
 
 // ac=models / ac=model-videos：走 MacCMS 信封，人物本身映射成 vod 条目
-//（vod_id=`model-<mid>`，MoonTVPlus 侧以此外缀识别走 model-videos 通道）。
+//（vod_id=`model-<mid>`，MoonPlayer 侧以此外缀识别走 model-videos 通道）。
 async function handleModels(site, req, res, ac) {
   const q = req.query;
   const pg = Math.max(1, parseInt(q.pg || q.page || q.p || '1', 10) || 1);
