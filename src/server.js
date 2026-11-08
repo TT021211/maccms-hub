@@ -330,6 +330,63 @@ async function resolveMp4(site, vid) {
   return d.sources[0].src;
 }
 
+// 播放列表验活：有些站多线路 CDN 档机房 IP（如 netflixgc 5 条线只剩 1 条能过），
+// 直接 302 会撞 403 转圈。这里下载首集播放列表验 `#EXTM3U`，不通就按 sid 轮询
+// 同 nid 的兄弟线路，首个能播的胜出；结果按集缓存 1 小时（直链 token 短效）。
+async function playlistAlive(url, site) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        Referer: site.base + '/',
+      },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return false;
+    const txt = await res.text();
+    return txt.includes('#EXTM3U');
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveWorkingM3u8(site, vid) {
+  const m = String(vid).match(/^(\d+)-(\d+)-(\d+)$/);
+  if (!m) return resolveMp4(site, vid);
+  const ckey = 'workm3u8:' + site.key + ':' + vid;
+  const hit = cacheGet(ckey);
+  if (hit) return hit;
+  const [, id, sid, nid] = m;
+  const order = [sid, ...[1, 2, 3, 4, 5, 6, 7, 8].map(String).filter((s) => s !== sid)];
+  let first = '';
+  for (const s of order) {
+    let src = '';
+    try {
+      src = await resolveMp4(site, `${id}-${s}-${nid}`);
+    } catch {
+      continue; // 该线路无此集或解析失败，换下一条
+    }
+    if (!src) continue;
+    if (!first) first = src;
+    if (!/\.m3u8(\?|$)/i.test(src)) {
+      cacheSet(ckey, src, 3600 * 1000);
+      return src;
+    }
+    if (await playlistAlive(src, site)) {
+      console.log(`[hls][${site.key}] ${vid} 线路 sid=${s} 验活通过`);
+      cacheSet(ckey, src, 3600 * 1000);
+      return src;
+    }
+    console.warn(`[hls][${site.key}] ${vid} 线路 sid=${s} 不可达，换线`);
+  }
+  if (first) return first; // 全灭也比 502 强，照旧 302（播放器侧报错）
+  throw new Error('no playable source');
+}
+
 const hlsJobs = new Map(); // `${site}:${vid}` -> Promise
 function ensureHls(site, vid) {
   const dir = hlsVidDir(site, vid);
@@ -431,7 +488,7 @@ async function handleHlsPlaylist(req, res) {
     // redirectM3u8 站（如 netflixgc，选集 vid 是 id-sid-nid）：懒解析到原生 m3u8
     // 后直接 302，不走 ffmpeg 转封装（mp4 站不受影响，继续 remux）
     if (site.def.redirectM3u8) {
-      const src = await resolveMp4(site, vid);
+      const src = await resolveWorkingM3u8(site, vid);
       if (/\.m3u8(\?|$)/i.test(src)) return res.redirect(src);
     }
     const p = await ensureHls(site, vid);

@@ -133,6 +133,8 @@ module.exports = {
   //   （首字符是 { 即 JSON，自己分两支写）。
   // redirectM3u8: true —— 选集 vid 非纯数字（如 netflixgc 的 id-sid-nid）且上游给原生 m3u8 时，
   //   /h/ 懒解析到 m3u8 后直接 302，不走 ffmpeg 转封装；mp4 站不要开（默认继续 remux）。
+  //   框架会先下载播放列表验 `#EXTM3U`，不通自动按 sid 轮询同 nid 兄弟线路
+  //   （多线路 CDN 档机房 IP 时自愈，结果按集缓存 1 小时），全灭才 302 首条。
   //   配套：detailUrl 按 vid 形态分流（纯数字→详情页，id-sid-nid→播放页），
   //   详情页只出元数据+选集清单（无 m3u8），播放页 parseDetail 解出直链；
   //   裸 id 可经 expandDetailUrl 顺带抓默认集播放页，给 /play?v=<裸id> 留活路。
