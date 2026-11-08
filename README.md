@@ -191,6 +191,9 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     kvrocks 在用的随机名卷，删了播放记录全没）+ suwayomi 镜像 2.09G（不用就删）。
     `/var/lib/docker/rootfs` 3.2G 身份未明，先别动。结论：以后每月 `docker image prune -a`
     + `builder prune -af` 各一次；19G 盘是紧的，考虑加盘。
+    `hls-cache` 里转封装旧切片只在新转码时才触发上限清理，陈的躺着不动：
+    `docker exec maccms-hub sh -c 'find /tmp/hls -mindepth 1 -maxdepth 2 -type d -mmin +120 -exec rm -rf {} +'`
+    定期清一把（只删 2 小时没动的，正在看的不碰）。
 
 18. **hohoj 翻页双坑（2026-11-05，本地实测打通）**：① 站内翻页参数是 `p`
     （分页全是 `javascript:changePage(N)` 跳转），网关之前按 `page=` 发，
@@ -221,7 +224,7 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     `/cloud/play/<id>` 内联播放器 JS 里（`mdc-garageplay.cdn.hinet.net/.../playlist.m3u8?token=&expires=`，
     约 4 小时过期），框架经 `expandDetailUrl` 自动二跳抓取（hohoj 同款），
     `passthrough` 直传。配套：`skipHtmlCache`（两页 HTML 都不缓存）+ `detailTtlMs=1h`
-    （框架新钩子，见 `server.js`，其他站不受影响）。MoonTV 后台加源
+    （框架新钩子，见 `server.js`，其他站不受影响）。MoonPlayer 后台加源
     `api: http://maccms-hub:3001/kinostream/api.php/provide/vod` 即可；
     内容多为受限内容，走通用源会被内容过滤，搜不到时先去搜索页“高级”里关过滤再试。
 22. **bjcam（2026-11-08，sexbjcam 录播站，`src/sites/bjcam.js`）**：WordPress retrotube，
@@ -264,3 +267,12 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
 - hohoj 人物墙（影片/人物切换＋头像圆墙＋作品流）与专用频道统一分类面包屑
   （选中路径＋共 N 个分类，点一下按组展开；小列表自动平铺）；频道副标题分类数改为动态计数。
 - 联动：本网关 hohoj 翻页修复（见 6.18）必须 `push → VPS pull`，否则 hohoj 频道翻页还是死的。
+
+### 2026-11-08 联动增补
+
+- kinostream：详情改二跳 `/cloud/play` 取原生 m3u8（见 6.21），分类页全量改框架 `staticFullList` 本地切页。
+- bjcam 新站（见 6.22）：新 embed 走 player API JSON，旧 embed（`playrecord.biz`）解 packer 取
+  links.hls2；`relayOnChallenge`＋`directHosts`＋`noCachePlayHtml` 三个新钩子在 `_template.js` 有说明。
+- 前端播放改走 VPS 落盘缓存（与本网关 `/h/` 转封装无关，不经过网关）：注意这是 moontv 容器磁盘，
+  和本网关 `hls-cache` 卷是两套东西，各自 expire；`hls-cache` 陈旧切片清理见 6.17 末尾。
+- HoHoJ 部分视频机（video-3/4/8）常驻防火墙拒单，任何出口都拿不到，播放页已改为人话提示换一部。
