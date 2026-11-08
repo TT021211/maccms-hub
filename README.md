@@ -2,7 +2,7 @@
 
 把任意刮削站实时转成 **MacCMS V10 `provide/vod` 采集接口** + **HLS 播放链路**，
 供 MoonPlayer（`tv.acxou.hair`，镜像 `ghcr.io/tt021211/moontvplus:latest`，
-含 `/hanime` / `/aqdlt` / `/hohoj` / `/kinostream` 四个专用频道）聚合搜索与播放。
+含 `/hanime` / `/aqdlt` / `/hohoj` / `/kinostream` / `/bjcam` / `/netflixgc` 六个专用频道）聚合搜索与播放。
 
 仓库：`https://github.com/TT021211/maccms-hub`（Public；push 即云构建 `ghcr.io/tt021211/maccms-hub:latest`，amd64+arm64）
 
@@ -29,6 +29,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | `src/sites/aqdlt.js` | aqdlt 专用适配器（13 分类，sojson 还原 + cdn.aqd-tv 原生 m3u8 直传） |
 | `src/sites/hohoj.js` | hohoj 专用适配器（13 分类，iframe 二跳 `/embed` + ggjav 原生 m3u8 直传，720P） |
 | `src/sites/kinostream.js` | KinoStream 适配器（6 分类，直连 SSR + cdn.hinet 原生 m3u8 直传，token 短效） |
+| `src/sites/netflixgc.js` | netflixgc 奈飞工厂适配器（6 分类，分类走站内 POST JSON 接口 + 搜索服务端渲染，选集 id-sid-nid 懒解析，m3u8 经 `/h/` 302 直跳） |
 | `src/sites/bjcam.js` | bjcam 适配器（3 分类，整站 CF 拦截走中转 + player API 直连取 hls，流短效，见 6.22） |
 | `src/sites/_template.js` | 新站模板（复制填空，见第 8 节） |
 | `test/smoke.js` | 离线冒烟测试（`npm test`）：适配器解析 + 路由回归 |
@@ -75,6 +76,7 @@ hanime1.me ──刮削──▶ maccms-hub:3001 ──内网http──▶ moont
 | aqdlt | 直连抓取（无 CF） | cdn.aqd-tv 原生 m3u8 直传（`passthrough`，单码率 480p） | 整站 sojson 混淆，先 vm 还原再解析；暂无站内搜索，频道页无搜索框；m3u8 无 CORS 头，须开 MoonTV 源 proxyMode |
 | hohoj | 直连抓取（无 CF） | ggjav 原生 m3u8 直传（`passthrough`，单码率 720p） | 详情页是壳，真实地址在内嵌 `/embed?id=` 子页（框架 `expandDetailUrl` 自动跟进）；m3u8 自带 CORS 头，直连可播 |
 | kinostream | 直连抓取（无 CF） | cdn.hinet 原生 m3u8 直传（`passthrough`） | 见 6.21：详情二跳 `/cloud/play` 取流、token 短效；部分内容受限，走通用源会被内容过滤，见备注 |
+| netflixgc | 直连抓取（无 CF） | 多线路原生 m3u8，选集 `id-sid-nid` 经 `/h/` 懒解析后 302 直跳（`redirectM3u8`，不转封装） | 见 6.23：分类是 POST JSON 接口（框架 `fetchListHtml` 新钩子），只收 sid=1 默认线路；墙内 m3u8 全 404，VPS 出境实测为准 |
 
 直传站列表不带 `vod_play_url`（聚合搜索会被 MoonTV 按 `episodes.length>0` 过滤），
 只走独立频道/源站寻片；详情自带 m3u8，播放页直连详情即可。
@@ -113,6 +115,7 @@ MoonPlayer 侧（镜像 `ghcr.io/tt021211/moontvplus:latest`，fork 自建 `/han
   key: aqdlt,      api: http://maccms-hub:3001/aqdlt/api.php/provide/vod     + 开 proxyMode
   key: hohoj,      api: http://maccms-hub:3001/hohoj/api.php/provide/vod
   key: kinostream, api: http://maccms-hub:3001/kinostream/api.php/provide/vod
+  key: netflixgc, api: http://maccms-hub:3001/netflixgc/api.php/provide/vod     + 配 PUBLIC_BASE_NETFLIXGC（https://hanime1.acxou.hair，/h/ 拼选集用）
 后台打开「禁用内容过滤器」（环境变量 NEXT_PUBLIC_DISABLE_YELLOW_FILTER=true，
 否则 Cosplay 分类会被过滤词表杀掉）
 ```
@@ -243,6 +246,34 @@ docker exec moontv-core wget -qO- --timeout=300 "http://maccms-hub:3001/h/hanime
     player JSON 用 `noCachePlayHtml` 每次现抓 + `detailTtlMs=1h`（框架新钩子，见 `server.js`，
     其他站不受影响）。前端频道 `/bjcam`（BJ剧场）+ 导航 + 后台频道开关；
     源地址由前端内置兜底从已配网关源派生（`getAvailableApiSites`），后台无需手动加源。
+
+23. **netflixgc（2026-11-08，奈飞工厂 `www.netflixgc.com`，`src/sites/netflixgc.js`）**：
+    标准 AppleCMS 站（原生 `/api.php/provide/vod` 已关 `closed`，只能刮）：
+    6 分类（电影/连续剧/漫剧/综艺/纪录片/体育，type_id 1/2/3/23/24/57），
+    **分类列表是 AJAX**：`#dataList` 空壳 + POST `/index.php/ds_api/vod`
+    （`type/page/by`，by=time/hits/score，每页 40，`pagecount/total` 直接可用；
+    GET 被反爬只吐 JS 桩，必须 POST）。
+    框架新增通用钩子（`src/server.js`，其他站不受影响）：`buildSearchUrl` 可返回
+    `{ url, post }`，`fetchListHtml` 即改 POST 表单提交（附 XHR 头，共用 `html:` 缓存）。
+    搜索走服务端渲染 `/vodsearch/<词>----------<pg>---.html`
+    （`.search-list` 卡片 + `.page-tip` 共 N 条/当前 X/Y 页）。
+    详情 `/voddetail/<id>.html`（标题/封面/简介/演职员 + 多线路 `.anthology-list-box`，
+    只收 sid=1 默认线路，其余丢弃）+ 播放 `/vodplay/<id>-<sid>-<nid>.html`
+    （内联 `player_aaaa`，`encrypt=2` 即 base64(escape(url))，解出原生 m3u8）。
+    选集 vid 取 `id-sid-nid`，详情只出清单不预抓 N 个播放页，播放由 `/h/` 懒解析；
+    框架新增 `redirectM3u8: true`：`/h/` 拿到 m3u8 后直接 302（不转封装，
+    `/h/:vid` 正则已放宽到 `[\d-]+`），裸 id 经 `expandDetailUrl` 顺带默认集给
+    `/play?v=<裸id>` 留活路。`PUBLIC_BASE_NETFLIXGC` 指向网关公网地址
+    （VPS 上就是 `https://hanime1.acxou.hair`）。
+    首页榜单（2026-11-08 增补）：6 个伪分类（type_id 101-106，group=榜单）——
+    热播榜/热搜榜/经典榜/冷门佳作榜/近期开播新剧/最新热播电影，走首页 GET
+    （`?board=` 仅做缓存区分），按 `h4` 文本（`startsWith`，标题带 emoji 后缀）
+    取所属 `.box-width` 分节卡片，每榜约 8 条、单页。
+    框架 `parseList/parsePageCount` 新增第 2/3 个参数透传 `buildSearchUrl` 返回值
+    （字符串 URL 或 `{url, post}` 对象），老适配器忽略即可，不受影响。
+    未竟：m3u8 在墙内全 404（Referer 无关，DNS/geo 层面），
+    本地只能验到刮削链（列表/详情/302 目标），**VPS 出境后必须实测一集能播**；
+    若 VPS 也 404 再考虑出境代理分级（参考 8.2）。
 
 ## 7. 加一个新站（5 分钟）
 

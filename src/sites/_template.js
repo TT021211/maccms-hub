@@ -127,6 +127,15 @@ module.exports = {
   //   命中则该 URL 走直连（省中转费用与延迟），其余仍走中转。
   // noCachePlayHtml: true —— 仅二跳子页（如短效 player JSON）跳过 html: 缓存、
   //   每次现抓；列表/详情 HTML 照常缓存（配合 useRelay 省调用次数）。
+  // 列表 POST（分类走站内 JSON 接口、搜索走 GET 渲染页时用，见 netflixgc.js）：
+  //   buildSearchUrl 对分类分支返回 { url, post }（post 是表单 body 字符串），
+  //   框架自动改 POST 提交（附 XHR 头），parseList/parsePageCount 照常收文本解析
+  //   （首字符是 { 即 JSON，自己分两支写）。
+  // redirectM3u8: true —— 选集 vid 非纯数字（如 netflixgc 的 id-sid-nid）且上游给原生 m3u8 时，
+  //   /h/ 懒解析到 m3u8 后直接 302，不走 ffmpeg 转封装；mp4 站不要开（默认继续 remux）。
+  //   配套：detailUrl 按 vid 形态分流（纯数字→详情页，id-sid-nid→播放页），
+  //   详情页只出元数据+选集清单（无 m3u8），播放页 parseDetail 解出直链；
+  //   裸 id 可经 expandDetailUrl 顺带抓默认集播放页，给 /play?v=<裸id> 留活路。
   //   整页都内嵌短效 token 的站继续用 skipHtmlCache（全部不缓存）。
   // 页面混淆（如 aqdlt 的 sojson）：在 parseList/parseDetail 开头先还原再 cheerio，
   //   参考 sites/aqdlt.js 的 deobfuscate()（vm 跑站点自己的解码桩 + document.write 劫持）。

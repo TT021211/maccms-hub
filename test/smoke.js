@@ -425,6 +425,100 @@ async function main() {
   assert.strictEqual(kD2.title, '某片');
   assert.strictEqual(kD2.episodes.length, 0);
 
+  // 11. netflixgc 适配器（AppleCMS 站：分类 POST JSON / 搜索服务端渲染 / 选集 id-sid-nid 懒解析）
+  const nfx = require('../src/sites/netflixgc');
+  assert.strictEqual(nfx.key, 'netflixgc');
+  assert.strictEqual(nfx.redirectM3u8, true);
+  assert.strictEqual(nfx.noCachePlayHtml, true);
+  assert.strictEqual(nfx.CATS.length, 12);
+  assert.strictEqual(nfx.catById(2).type_name, '连续剧');
+  // 搜索走 GET 渲染页
+  assert.strictEqual(
+    nfx.buildSearchUrl({ query: '鬼谜', pg: 2 }, 'https://www.netflixgc.com'),
+    'https://www.netflixgc.com/vodsearch/%E9%AC%BC%E8%B0%9C----------2---.html'
+  );
+  // 分类走 POST JSON（框架 fetchListHtml 识别 {url, post}）
+  const nfxListReq = nfx.buildSearchUrl({ genre: '2', sort: '', pg: 1 }, 'https://www.netflixgc.com');
+  assert.strictEqual(nfxListReq.url, 'https://www.netflixgc.com/index.php/ds_api/vod');
+  assert.ok(String(nfxListReq.post).includes('type=2'), JSON.stringify(nfxListReq));
+  assert.ok(String(nfxListReq.post).includes('by=time'), JSON.stringify(nfxListReq));
+  assert.ok(String(nfx.buildSearchUrl({ genre: '2', sort: 'hits', pg: 3 }, 'https://www.netflixgc.com').post).includes('by=hits'));
+  // JSON 列表解析
+  const nfxJson = JSON.stringify({
+    code: 1, pagecount: 453, total: 18095,
+    list: [
+      { vod_id: 119030, vod_name: '鬼谜东宫', vod_pic: 'https://x/119030.jpg' },
+      { vod_id: 119058, vod_name: '幸运女神', vod_pic: '' },
+    ],
+  });
+  const nfxItems = nfx.parseList(nfxJson);
+  assert.strictEqual(nfxItems.length, 2);
+  assert.strictEqual(nfxItems[0].vid, '119030');
+  assert.strictEqual(nfxItems[0].title, '鬼谜东宫');
+  assert.strictEqual(nfxItems[0].pic, 'https://x/119030.jpg');
+  assert.strictEqual(nfx.parsePageCount(nfxJson, 1), 453);
+  // 搜索 HTML 解析 + 分页
+  const nfxSearchHtml =
+    '<div class="vod-detail search-list"><div class="detail-pic"><img data-src="https://x/a.jpg" src="data:image/gif;base64,xx"></div>' +
+    '<div class="detail-info"><a href="/voddetail/119030.html"><h3 class="slide-info-title">鬼谜东宫</h3></a></div></div>' +
+    '<div class="page-tip">共6855条数据,当前1/686页</div>';
+  const nfxSearch = nfx.parseList(nfxSearchHtml);
+  assert.strictEqual(nfxSearch.length, 1);
+  assert.strictEqual(nfxSearch[0].vid, '119030');
+  assert.strictEqual(nfxSearch[0].pic, 'https://x/a.jpg');
+  assert.strictEqual(nfx.parsePageCount(nfxSearchHtml, 1), 686);
+  // detailUrl 双模
+  assert.strictEqual(nfx.detailUrl('119030', 'https://www.netflixgc.com'), 'https://www.netflixgc.com/voddetail/119030.html');
+  assert.strictEqual(nfx.detailUrl('119030-1-2', 'https://www.netflixgc.com'), 'https://www.netflixgc.com/vodplay/119030-1-2.html');
+  // 播放页解密（encrypt=2）
+  const nfxM3u8 = 'https://cdn.example.com/x/index.m3u8';
+  const nfxEnc = Buffer.from(encodeURIComponent(nfxM3u8).replace(/'/g, '%27'), 'utf8').toString('base64');
+  assert.strictEqual(nfx.decryptPlayerUrl(nfxEnc, 2), nfxM3u8);
+  assert.strictEqual(nfx.decryptPlayerUrl(nfxM3u8, 0), nfxM3u8);
+  const nfxPlayPage = `<div class="MacPlayer"><script>var player_aaaa={"flag":"play","encrypt":2,"vod_data":{"vod_name":"鬼谜东宫"},"url":"${nfxEnc}","from":"bfzym3u8","id":"119030","sid":1,"nid":2}</` + `script></div>`;
+  const nfxEp = nfx.parseDetail(nfxPlayPage, '119030-1-2');
+  assert.strictEqual(nfxEp.sources[0].src, nfxM3u8);
+  assert.strictEqual(nfxEp.episodes[0].url, nfxM3u8);
+  // 详情页：元数据 + sid=1 选集盒
+  const nfxMeta =
+    '<div class="detail-pic"><img data-src="https://x/cover.jpg"></div>' +
+    '<h3 class="slide-info-title">鬼谜东宫</h3>' +
+    '<div class="slide-info"><strong>演员 :</strong><a>南柱赫</a><span>,</span><a>卢允瑞</a></div>' +
+    '<div class="vod-tag"><a>#鬼谜东宫</a><a>#恐怖</a></div>' +
+    '<div id="height_limit">简介文字</div>' +
+    '<div class="anthology-list-box"><ul><li><a href="/vodplay/119030-4-1.html">1</a></li></ul></div>' +
+    '<div class="anthology-list-box"><ul><li><a href="/vodplay/119030-1-1.html">第1集</a></li>' +
+    '<li><a href="/vodplay/119030-1-2.html">第2集</a></li></ul></div>';
+  const nfxD = nfx.parseDetail(nfxMeta, '119030', nfxPlayPage);
+  assert.strictEqual(nfxD.title, '鬼谜东宫');
+  assert.strictEqual(nfxD.pic, 'https://x/cover.jpg');
+  assert.strictEqual(nfxD.actor, '南柱赫,卢允瑞');
+  assert.deepStrictEqual(nfxD.tags, ['鬼谜东宫', '恐怖']);
+  assert.strictEqual(nfxD.episodes.length, 2, JSON.stringify(nfxD.episodes));
+  assert.strictEqual(nfxD.episodes[0].vid, '119030-1-1', '必须选中 sid=1 默认线路');
+  assert.strictEqual(nfxD.sources[0].src, nfxM3u8, '二跳默认集直链给 /play?v=裸id 用');
+  // 首页榜单：按 h4 分节
+  assert.strictEqual(nfx.catById(101).type_name, '热播榜');
+  const nfxBoardReq = nfx.buildSearchUrl({ genre: 'board:热播榜', pg: 1 }, 'https://www.netflixgc.com');
+  assert.ok(String(nfxBoardReq).includes('?board='), nfxBoardReq);
+  const nfxBoardHtml =
+    '<div class="box-width"><div class="title"><div class="title-left"><h4>热播榜🔥</h4></div></div>' +
+    '<div class="public-list-box"><a class="public-list-exp" href="/voddetail/80498.html" title="弗兰肯斯坦">' +
+    '<img data-src="https://x/80498.jpg" src="data:image/gif;base64,xx"></a></div>' +
+    '<div class="public-list-box"><a class="public-list-exp" href="/voddetail/80474.html" title="你旁观的罪">' +
+    '<img src="https://x/80474.jpg"></a></div></div>' +
+    '<div class="box-width"><div class="title"><div class="title-left"><h4>热搜榜🔥</h4></div></div>' +
+    '<div class="public-list-box"><a class="public-list-exp" href="/voddetail/19621.html" title="怪奇物语第一季">' +
+    '<img data-src="https://x/19621.jpg"></a></div></div>';
+  const nfxHot = nfx.parseList(nfxBoardHtml, nfxBoardReq);
+  assert.strictEqual(nfxHot.length, 2, JSON.stringify(nfxHot));
+  assert.strictEqual(nfxHot[0].vid, '80498');
+  assert.strictEqual(nfxHot[0].pic, 'https://x/80498.jpg');
+  const nfxTop = nfx.parseList(nfxBoardHtml, 'https://www.netflixgc.com/?board=%E7%83%AD%E6%90%9C%E6%A6%9C');
+  assert.strictEqual(nfxTop.length, 1);
+  assert.strictEqual(nfxTop[0].vid, '19621');
+  assert.strictEqual(nfx.parsePageCount(nfxBoardHtml, 3, nfxBoardReq), 3, '榜单单页，总页数恒为当前页');
+
   console.log('smoke OK: adapter + framework routes');
 }
 

@@ -192,6 +192,40 @@ async function fetchHtml(site, url, opts) {
   return text;
 }
 
+// 列表抓取：适配器 buildSearchUrl 可返回字符串（GET 直抓）或 { url, post }
+// （POST 表单，如 netflixgc 的 ds_api JSON 接口：GET 只吐反爬 JS 桩，必须 POST）。
+// POST 按表单提交，附 XHR 头，结果与 GET 共用 html: 缓存（key 带 body）。
+async function fetchListHtml(site, url) {
+  if (url && typeof url === 'object' && url.url) {
+    const body = String(url.post || '');
+    const ckey = 'html:' + url.url + '?' + body;
+    const hit = cacheGet(ckey);
+    if (hit) return hit;
+    const ua = (site.def.UA_LIST || []).filter(Boolean)[0] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(url.url, {
+        method: 'POST',
+        headers: {
+          ...site.def.headersFor(ua, site.base),
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body,
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`upstream http ${res.status} for ${url.url}`);
+      const text = await res.text();
+      cacheSet(ckey, text);
+      return text;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return fetchHtml(site, url);
+}
+
 function ffExec(args, timeoutMs = 600000) {
   return new Promise((resolve, reject) => {
     execFile('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -203,7 +237,7 @@ function ffExec(args, timeoutMs = 600000) {
 
 function hlsVidDir(site, vid) {
   // 默认站沿用老布局 /tmp/hls/<vid>（已缓存的切片不用重切）；其他站隔离到子目录防 vid 撞车
-  const safe = String(vid).replace(/[^0-9]/g, '') || 'x';
+  const safe = String(vid).replace(/[^0-9-]/g, '') || 'x';
   if (site.key === DEFAULT_SITE) return path.join(HLS_DIR, safe);
   return path.join(HLS_DIR, site.key, safe);
 }
@@ -392,8 +426,14 @@ async function handleHlsPlaylist(req, res) {
   const site = siteOf(req.params.site || DEFAULT_SITE);
   const vid = req.params.vid || '';
   if (!site) return res.status(404).json({ code: 0, msg: 'unknown site' });
-  if (!/^\d+$/.test(vid)) return res.status(400).json({ code: 0, msg: 'bad vid' });
+  if (!/^[\d-]+$/.test(vid)) return res.status(400).json({ code: 0, msg: 'bad vid' });
   try {
+    // redirectM3u8 站（如 netflixgc，选集 vid 是 id-sid-nid）：懒解析到原生 m3u8
+    // 后直接 302，不走 ffmpeg 转封装（mp4 站不受影响，继续 remux）
+    if (site.def.redirectM3u8) {
+      const src = await resolveMp4(site, vid);
+      if (/\.m3u8(\?|$)/i.test(src)) return res.redirect(src);
+    }
     const p = await ensureHls(site, vid);
     res.type('application/vnd.apple.mpegurl');
     res.set('Cache-Control', 'no-cache');
@@ -412,7 +452,7 @@ app.get(['/h/:site([a-z0-9-]+)/:vid/:seg', '/h/:vid/:seg'], (req, res) => {
   if (!site) return res.status(404).end();
   const vid = req.params.vid || '';
   const seg = req.params.seg || '';
-  if (!/^\d+$/.test(vid) || !/^[A-Za-z0-9]+\.ts$/.test(seg)) return res.status(400).end();
+  if (!/^[\d-]+$/.test(vid) || !/^[A-Za-z0-9]+\.ts$/.test(seg)) return res.status(400).end();
   const dir = hlsVidDir(site, vid);
   const f = path.resolve(dir, seg);
   if (!f.startsWith(path.resolve(dir) + path.sep) && f !== path.resolve(dir)) return res.status(400).end();
@@ -451,8 +491,8 @@ async function handleList(site, req, res) {
   }
 
   try {
-    const html = await fetchHtml(site, url);
-    const items = site.def.parseList(html);
+    const html = await fetchListHtml(site, url);
+    const items = site.def.parseList(html, url);
     // staticFullList：上游分类页一次给全量、无站内翻页（如 kinostream），框架按 pg/limit 本地切页；
     // 其他站保持原逻辑（每页 URL 不同，只取前 limit 条）。
     let pagecount;
@@ -463,7 +503,7 @@ async function handleList(site, req, res) {
       total = items.length;
       pageItems = items.slice((pg - 1) * limit, pg * limit);
     } else {
-      pagecount = Math.max(pg, site.def.parsePageCount(html, pg));
+      pagecount = Math.max(pg, site.def.parsePageCount(html, pg, url));
       total = pagecount * limit;
       pageItems = items.slice(0, limit);
     }
@@ -517,8 +557,8 @@ async function handleDetail(site, req, res) {
       url = site.def.buildSearchUrl({ genre: c.genre, sort: c.sort, pg }, site.base);
     } else url = site.def.buildSearchUrl({ pg }, site.base);
     try {
-      const html = await fetchHtml(site, url);
-      ids = site.def.parseList(html).slice(0, 10).map((v) => v.vid);
+      const html = await fetchListHtml(site, url);
+      ids = site.def.parseList(html, url).slice(0, 10).map((v) => v.vid);
     } catch (e) {
       return res.status(502).json({ code: 0, msg: '上游抓取失败: ' + (e.message || e) });
     }
