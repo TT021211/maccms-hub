@@ -519,6 +519,31 @@ app.get(['/h/:site([a-z0-9-]+)/:vid/:seg', '/h/:vid/:seg'], (req, res) => {
   fs.createReadStream(f).pipe(res);
 });
 
+// redirectM3u8 站的多级 playlist 透传：上游 master 常是 `master → 子 playlist → 分片`
+// 多层嵌套，前端代理按相对路径拼到 /h/<site>/<vid>/ 后面（如 …/4000k_1080/hls/index.m3u8）。
+// 这里把多余路径相对已验活的 master 解析成绝对地址再 302，不落地、不转封装。
+app.get('/h/:site([a-z0-9-]+)/:vid/*', async (req, res) => {
+  const site = siteOf(req.params.site || DEFAULT_SITE);
+  if (!site || !site.def.redirectM3u8) return res.status(404).end();
+  const vid = req.params.vid || '';
+  const rest = req.params[0] || '';
+  if (!/^[\d-]+$/.test(vid) || !rest || rest.includes('..')) return res.status(400).end();
+  try {
+    const master = await resolveWorkingM3u8(site, vid);
+    let target;
+    try {
+      target = new URL(rest, master).href;
+    } catch {
+      return res.status(400).end();
+    }
+    if (!/^https?:\/\//i.test(target)) return res.status(400).end();
+    return res.redirect(target);
+  } catch (e) {
+    console.error(`[hls][${site.key}] ${vid}/${rest} nested redirect failed: ${(e && e.message) || e}`);
+    return res.status(502).json({ code: 0, msg: '上游抓取失败' });
+  }
+});
+
 async function handleList(site, req, res) {
   const q = req.query;
   const pg = Math.max(1, parseInt(q.pg || q.page || q.p || '1', 10) || 1);
