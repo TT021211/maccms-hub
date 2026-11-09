@@ -167,10 +167,55 @@ function parseDetail(html, vid) {
     .filter((s) => s && s.length > 1 && s.length <= 20)
     .slice(0, 12);
   const sources = extractSources(html);
+  // 多档清晰度直接做成选集（1080p/720p/480p/240p），播放页按集切换
   const episodes = sources.length
-    ? [{ name: '正片', url: sources[0].src, vid: String(vid) }]
+    ? sources.map((s) => ({ name: `${s.size}p`, url: s.src, vid: String(vid) }))
     : [{ name: '正片', vid: String(vid) }];
   return { title, pic, desc, actor, genreName: tags[0] || '', sources, episodes, tags };
+}
+
+// 站内真实导航（hohoj 同款）：首页菜单是数字分类 /video?c=<id>（中文 alt 名），
+// 另有少量 slug 分类 /categories/<slug>；24 小时合并一次，失败回退内置 12 个
+let navCatsLoadedAt = 0;
+const NAV_TTL_MS = 24 * 3600 * 1000;
+
+async function ensureNavCats(base, fetchFn) {
+  const now = Date.now();
+  if (now - navCatsLoadedAt < NAV_TTL_MS && CATS.length > 12) return;
+  try {
+    const url = (base || 'https://cn.pornhub.com').replace(/\/$/, '') + '/';
+    const res = await fetchFn(url);
+    if (!res.ok) return;
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const haveGenres = new Set(CATS.map((c) => c.genre));
+    const seen = new Set();
+    const add = (type_id, type_name, genre) => {
+      if (!type_name || !genre || haveGenres.has(genre) || seen.has(genre)) return;
+      seen.add(genre);
+      haveGenres.add(genre);
+      CATS.push({ type_id, type_name, genre, sort: '', group: '分类' });
+    };
+    let sid = 0;
+    $('a[href^="/video?c="]').each((_, a) => {
+      const m = ($(a).attr('href') || '').match(/^\/video\?c=(\d+)/);
+      if (!m) return;
+      const label = clean($(a).attr('alt') || $(a).text()).slice(0, 12);
+      if (!label) return;
+      add(1000 + parseInt(m[1], 10), label, m[1]);
+    });
+    $('a[href^="/categories/"]').each((_, a) => {
+      const m = ($(a).attr('href') || '').match(/^\/categories\/([a-z0-9-]+)/);
+      if (!m) return;
+      const label = clean($(a).text()).slice(0, 12);
+      if (!label) return;
+      sid += 1;
+      add(2000 + sid, label, m[1]);
+    });
+    navCatsLoadedAt = now;
+  } catch {
+    // 导航拉取失败不影响列表：继续用内置 12 个
+  }
 }
 
 module.exports = {
@@ -188,6 +233,7 @@ module.exports = {
   headersFor,
   buildSearchUrl,
   detailUrl,
+  ensureNavCats,
   expandDetailUrl: null,
   parseList,
   parsePageCount,

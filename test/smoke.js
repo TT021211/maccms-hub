@@ -620,7 +620,23 @@ async function main() {
   const phD = ph.parseDetail(phDetailHtml, '6a9b29c03c7d8');
   assert.strictEqual(phD.title, 'Nia Nacci Gives Landlord');
   assert.ok(phD.sources[0].src.includes('1080P_4000K'), JSON.stringify(phD.sources));
+  assert.strictEqual(phD.episodes.length, 2, '多档清晰度做成选集');
+  assert.strictEqual(phD.episodes[0].name, '1080p');
   assert.strictEqual(phD.episodes[0].url, phD.sources[0].src);
+  assert.strictEqual(phD.episodes[1].name, '720p');
+  // 站内真实导航合并（数字分类 + slug 分类，去重，24h 缓存）
+  const before = ph.CATS.length;
+  await ph.ensureNavCats('https://cn.pornhub.com', async () => ({
+    ok: true,
+    text: async () =>
+      '<a href="/video?c=7" alt="巨屌"></a>' +
+      '<a href="/video?c=24" alt="公众野战"></a>' +
+      '<a href="/categories/college">College</a>' +
+      '<a href="/categories">全部</a>',
+  }));
+  assert.ok(ph.CATS.length > before, `CATS=${ph.CATS.length}`);
+  const dyn = ph.CATS.find((c) => c.genre === '7');
+  assert.ok(dyn && dyn.group === '分类', JSON.stringify(dyn));
 
   console.log('smoke OK: adapter + framework routes');
 }
