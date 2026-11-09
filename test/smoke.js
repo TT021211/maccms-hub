@@ -519,6 +519,58 @@ async function main() {
   assert.strictEqual(nfxTop[0].vid, '19621');
   assert.strictEqual(nfx.parsePageCount(nfxBoardHtml, 3, nfxBoardReq), 3, '榜单单页，总页数恒为当前页');
 
+  // 12. xhamster 适配器（Nuxt SSR + 原生 m3u8 直传）
+  const xh = require('../src/sites/xhamster');
+  assert.strictEqual(xh.key, 'xhamster');
+  assert.strictEqual(xh.passthrough, true);
+  assert.strictEqual(xh.CATS.length, 12);
+  assert.strictEqual(xh.catById(1).genre, 'japanese');
+  assert.strictEqual(
+    xh.buildSearchUrl({ query: 'japanese', pg: 1 }, 'https://xhamster.com'),
+    'https://xhamster.com/search/japanese'
+  );
+  assert.strictEqual(
+    xh.buildSearchUrl({ query: 'japanese', pg: 3 }, 'https://xhamster.com'),
+    'https://xhamster.com/search/japanese?page=3'
+  );
+  assert.strictEqual(
+    xh.buildSearchUrl({ genre: 'asian', pg: 1 }, 'https://xhamster.com'),
+    'https://xhamster.com/categories/asian'
+  );
+  assert.strictEqual(
+    xh.buildSearchUrl({ genre: 'asian', pg: 2 }, 'https://xhamster.com'),
+    'https://xhamster.com/categories/asian/2'
+  );
+  const xhListHtml =
+    '<div class="video-thumb" data-video-id="7305747">' +
+    '<a href="https://xhamster.com/videos/japanese-adult-story-7305747" aria-label="Japanese adult story">' +
+    '<img src="https://ic-vt-nss.xhcdn.com/a/xxx/1280x720.232.jpg"></a>' +
+    '<div data-role="video-duration-container"><div data-role="video-duration">10:41</div></div></div>' +
+    '<div class="video-thumb" data-video-id="7305747">' +
+    '<a href="https://xhamster.com/videos/japanese-adult-story-7305747">重复卡</a></div>';
+  const xhItems = xh.parseList(xhListHtml);
+  assert.strictEqual(xhItems.length, 1, JSON.stringify(xhItems));
+  assert.strictEqual(xhItems[0].vid, 'japanese-adult-story-7305747');
+  assert.strictEqual(xhItems[0].title, 'Japanese adult story');
+  assert.ok(xhItems[0].pic.includes('1280x720.232.jpg'));
+  assert.strictEqual(xh.parsePageCount('{"pagination":{"maxPages":2693}}', 1), 2693);
+  assert.strictEqual(
+    xh.detailUrl('japanese-adult-story-7305747', 'https://xhamster.com'),
+    'https://xhamster.com/videos/japanese-adult-story-7305747'
+  );
+  const xhDetailHtml =
+    '<html><head><meta property="og:title" content="Japanese adult story">' +
+    '<meta property="og:image" content="https://ic-vt-nss.xhcdn.com/a/xxx/cover.jpg">' +
+    '<meta property="og:description" content="Watch Japanese adult story porn. Starring: Aya Shiina. Category: Uncensored, Asian, Nude. Enjoy this XXX sex video and more!">' +
+    '<link rel="preload" as="fetch" href="https://video-nss.xhcdn.com/abc,123/media=hls4/multi=256x144:144p:/007/305/747/_TPL_.av1.mp4.m3u8">' +
+    '</head><body></body></html>';
+  const xhD = xh.parseDetail(xhDetailHtml, 'japanese-adult-story-7305747');
+  assert.strictEqual(xhD.title, 'Japanese adult story');
+  assert.strictEqual(xhD.actor, 'Aya Shiina');
+  assert.ok(xhD.tags.includes('Asian'), JSON.stringify(xhD.tags));
+  assert.ok(xhD.sources[0].src.endsWith('.m3u8'));
+  assert.strictEqual(xhD.episodes[0].url, xhD.sources[0].src);
+
   console.log('smoke OK: adapter + framework routes');
 }
 
