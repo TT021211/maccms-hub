@@ -571,6 +571,57 @@ async function main() {
   assert.ok(xhD.sources[0].src.endsWith('.m3u8'));
   assert.strictEqual(xhD.episodes[0].url, xhD.sources[0].src);
 
+  // 13. pornhub 适配器（SSR + mediaDefinitions 多档 m3u8 直传，签名约 2h）
+  const ph = require('../src/sites/pornhub');
+  assert.strictEqual(ph.key, 'pornhub');
+  assert.strictEqual(ph.passthrough, true);
+  assert.strictEqual(ph.CATS.length, 12);
+  assert.strictEqual(ph.catById(1).genre, '111');
+  assert.strictEqual(
+    ph.buildSearchUrl({ query: 'japanese', pg: 1 }, 'https://cn.pornhub.com'),
+    'https://cn.pornhub.com/video/search?search=japanese'
+  );
+  assert.strictEqual(
+    ph.buildSearchUrl({ query: 'japanese', pg: 3 }, 'https://cn.pornhub.com'),
+    'https://cn.pornhub.com/video/search?search=japanese&page=3'
+  );
+  assert.strictEqual(
+    ph.buildSearchUrl({ genre: '111', pg: 2 }, 'https://cn.pornhub.com'),
+    'https://cn.pornhub.com/video?c=111&page=2'
+  );
+  assert.strictEqual(
+    ph.buildSearchUrl({ genre: 'teen', pg: 1 }, 'https://cn.pornhub.com'),
+    'https://cn.pornhub.com/categories/teen'
+  );
+  const phListHtml =
+    '<ul><li class="pcVideoListItem" data-video-vkey="6a9b29c03c7d8" data-video-id="490645695">' +
+    '<a href="/view_video.php?viewkey=6a9b29c03c7d8" title="Nia Nacci Gives Landlord">' +
+    '<img src="https://pix-cdn77.phncdn.com/x/01.jpg"></a></li>' +
+    '<li class="pcVideoListItem" data-video-vkey="6a9b29c03c7d8">' +
+    '<a href="/view_video.php?viewkey=6a9b29c03c7d8">重复卡</a></li></ul>';
+  const phItems = ph.parseList(phListHtml);
+  assert.strictEqual(phItems.length, 1, JSON.stringify(phItems));
+  assert.strictEqual(phItems[0].vid, '6a9b29c03c7d8');
+  assert.ok(phItems[0].pic.includes('01.jpg'));
+  assert.strictEqual(ph.parsePageCount('{"pagination":{"maxPages":2693}}', 1), 2693);
+  assert.strictEqual(
+    ph.parsePageCount('<li class="page_number"><a>7</a></li>', 1),
+    7
+  );
+  assert.strictEqual(
+    ph.detailUrl('6a9b29c03c7d8', 'https://cn.pornhub.com'),
+    'https://cn.pornhub.com/view_video.php?viewkey=6a9b29c03c7d8'
+  );
+  const phDetailHtml =
+    '<html><head><meta property="og:title" content="Nia Nacci Gives Landlord">' +
+    '<meta property="og:image" content="https://ci.phncdn.com/x/cover.jpg">' +
+    '<script>var player={};var mediaDefinitions:[{"group":1,"format":"hls","quality":"720","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/720P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2"},' +
+    '{"group":1,"format":"hls","quality":"1080","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/1080P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2"}];</' + 'script></head></html>';
+  const phD = ph.parseDetail(phDetailHtml, '6a9b29c03c7d8');
+  assert.strictEqual(phD.title, 'Nia Nacci Gives Landlord');
+  assert.ok(phD.sources[0].src.includes('1080P_4000K'), JSON.stringify(phD.sources));
+  assert.strictEqual(phD.episodes[0].url, phD.sources[0].src);
+
   console.log('smoke OK: adapter + framework routes');
 }
 
