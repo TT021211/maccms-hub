@@ -615,8 +615,8 @@ async function main() {
   const phDetailHtml =
     '<html><head><meta property="og:title" content="Nia Nacci Gives Landlord">' +
     '<meta property="og:image" content="https://ci.phncdn.com/x/cover.jpg">' +
-    '<script>var player={};var mediaDefinitions:[{"group":1,"format":"hls","quality":"720","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/720P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2"},' +
-    '{"group":1,"format":"hls","quality":"1080","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/1080P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2"}];</' + 'script></head></html>';
+    '<script>var player={};var mediaDefinitions:[{"group":1,"format":"hls","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/720P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2","defaultQuality":false,"quality":"720"},' +
+    '{"group":1,"format":"hls","videoUrl":"https:\\/\\/ev-h.phncdn.com\\/hls\\/x\\/1080P_4000K_x.mp4\\/master.m3u8?validfrom=1&validto=2","defaultQuality":true,"quality":"1080"}],"x":1;</' + 'script></head></html>';
   const phD = ph.parseDetail(phDetailHtml, '6a9b29c03c7d8');
   assert.strictEqual(phD.title, 'Nia Nacci Gives Landlord');
   assert.ok(phD.sources[0].src.includes('1080P_4000K'), JSON.stringify(phD.sources));

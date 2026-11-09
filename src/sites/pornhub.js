@@ -123,16 +123,55 @@ function detailUrl(vid, base) {
   return `${base}/view_video.php?viewkey=${encodeURIComponent(String(vid))}`;
 }
 
-// mediaDefinitions JSON：按清晰度降序，取最高档（sources[0] 即最高，框架拿它 302）
+// mediaDefinitions JSON：按清晰度降序，取最高档（sources[0] 即最高，框架拿它 302）。
+// 注意页内字段顺序是 videoUrl 在前、quality 在后，且没有固定相邻关系，
+// 这里用括号配平抠出整个数组再 JSON.parse，不依赖字段顺序。
+function extractBracket(s, openIdx) {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = openIdx; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) return s.slice(openIdx, i + 1);
+    }
+  }
+  return '';
+}
+
 function extractSources(html) {
-  const t = String(html || '').replace(/\\\//g, '/');
+  const t = String(html || '');
   const found = [];
-  const re = /"quality"\s*:\s*"(\d+)"\s*,\s*"videoUrl"\s*:\s*"(https:[^"]+?\.m3u8[^"]*)"/g;
-  let m;
-  while ((m = re.exec(t))) {
-    const q = parseInt(m[1], 10) || 0;
-    const src = m[2].replace(/[\\,;)\]]+$/, '');
-    if (/^https:\/\//i.test(src)) found.push({ size: q, src });
+  const push = (q, src) => {
+    const s = String(src || '').replace(/\\\//g, '/');
+    if (/^https:\/\//i.test(s) && /\.m3u8(\?|$)/i.test(s)) found.push({ size: parseInt(q, 10) || 0, src: s });
+  };
+  const mi = t.search(/mediaDefinitions"\s*:\s*\[/);
+  if (mi >= 0) {
+    const arrText = extractBracket(t, t.indexOf('[', mi));
+    try {
+      const arr = JSON.parse(arrText);
+      if (Array.isArray(arr)) {
+        for (const o of arr) {
+          if (o && typeof o === 'object') push(o.quality, o.videoUrl);
+        }
+      }
+    } catch {}
+  }
+  if (!found.length) {
+    // 兜底：散装 videoUrl 全收（quality 未知，按出现顺序即高到低）
+    const re = /"videoUrl"\s*:\s*"(https:[^"]+?\.m3u8[^"]*)"/g;
+    let m;
+    while ((m = re.exec(t))) push(0, m[1]);
   }
   found.sort((a, b) => b.size - a.size);
   const seen = new Set();
