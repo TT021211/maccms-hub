@@ -155,7 +155,7 @@ function extractSources(html) {
     const s = String(src || '').replace(/\\\//g, '/');
     if (/^https:\/\//i.test(s) && /\.m3u8(\?|$)/i.test(s)) found.push({ size: parseInt(q, 10) || 0, src: s });
   };
-  const mi = t.search(/mediaDefinitions"\s*:\s*\[/);
+  const mi = t.search(/"?mediaDefinitions"?\s*:\s*\[/);
   if (mi >= 0) {
     const arrText = extractBracket(t, t.indexOf('[', mi));
     try {
