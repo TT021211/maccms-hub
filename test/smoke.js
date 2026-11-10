@@ -624,6 +624,31 @@ async function main() {
   assert.strictEqual(phD.episodes[0].name, '1080p');
   assert.strictEqual(phD.episodes[0].url, phD.sources[0].src);
   assert.strictEqual(phD.episodes[1].name, '720p');
+  // ensurePlayable：首抓全灭则重抓换线路（stub：第一次给死链主机，第二次给活的）
+  const mkStub = (host) => async () => ({
+    ok: true,
+    text: async () =>
+      `<html><script>var mediaDefinitions:[{"group":1,"format":"hls","videoUrl":"https:\\/\\/${host}\\/x\\/720P_x.mp4\\/master.m3u8","defaultQuality":true,"quality":"720"}];</script></html>`,
+  });
+  const deadDetail = ph.parseDetail(
+    '<html><script>var mediaDefinitions:[{"group":1,"format":"hls","videoUrl":"https:\\/\\/dead.cdn\\/x\\/720P_x.mp4\\/master.m3u8","defaultQuality":true,"quality":"720"}];</script></html>',
+    'vkey1'
+  );
+  let headCalls = 0;
+  const origFetch = global.fetch;
+  global.fetch = async (url) => {
+    headCalls++;
+    if (String(url).includes('dead.cdn')) return { ok: false, status: 410, text: async () => '' };
+    return { ok: true, status: 200, text: async () => '#EXTM3U\n#EXT-X-VERSION:3' };
+  };
+  try {
+    const good = await ph.ensurePlayable({ base: 'https://cn.pornhub.com' }, 'vkey1', deadDetail, mkStub('alive.cdn'));
+    assert.ok(good.sources[0].src.includes('alive.cdn'), JSON.stringify(good.sources));
+    assert.strictEqual(good.episodes[0].url, good.sources[0].src);
+    assert.ok(headCalls >= 2, `headCalls=${headCalls}`);
+  } finally {
+    global.fetch = origFetch;
+  }
   // 站内真实导航合并（数字分类 + slug 分类，去重，24h 缓存）
   const before = ph.CATS.length;
   await ph.ensureNavCats('https://cn.pornhub.com', async () => ({

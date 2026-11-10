@@ -158,14 +158,20 @@ function extractSources(html) {
   const mi = t.search(/"?mediaDefinitions"?\s*:\s*\[/);
   if (mi >= 0) {
     const arrText = extractBracket(t, t.indexOf('[', mi));
+    let arr = null;
     try {
-      const arr = JSON.parse(arrText);
-      if (Array.isArray(arr)) {
-        for (const o of arr) {
-          if (o && typeof o === 'object') push(o.quality, o.videoUrl);
-        }
+      arr = JSON.parse(arrText);
+    } catch {
+      // 兜底：个别页有多余转义，去掉反斜杠再解一次
+      try {
+        arr = JSON.parse(arrText.replace(/\\/g, ''));
+      } catch {}
+    }
+    if (Array.isArray(arr)) {
+      for (const o of arr) {
+        if (o && typeof o === 'object') push(o.quality, o.videoUrl);
       }
-    } catch {}
+    }
   }
   if (!found.length) {
     // 兜底：散装 videoUrl 全收（quality 未知，按出现顺序即高到低）
@@ -211,6 +217,86 @@ function parseDetail(html, vid) {
     ? sources.map((s) => ({ name: `${s.size}p`, url: s.src, vid: String(vid) }))
     : [{ name: '正片', vid: String(vid) }];
   return { title, pic, desc, actor, genreName: tags[0] || '', sources, episodes, tags };
+}
+
+// 验活 + 换 steering：站内 CDN 按次分配主机（hv-h 常年 410，ev-h 才通），
+// 详情出链前先 GET 验证 master 含 #EXTM3U，全灭就重抓详情页换一批，最多 3 轮。
+// 成功的结果由框架按 detailTtlMs 缓存，失败兜底返回原解析（前端报错，不静默丢）。
+async function playlistAlive(url, ua) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': ua,
+        Referer: 'https://cn.pornhub.com/',
+      },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return false;
+    const txt = await res.text();
+    return txt.includes('#EXTM3U');
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function ensurePlayable(site, vid, d, fetchImpl) {
+  const F = fetchImpl || fetch;
+  const ua = (UA_LIST || []).filter(Boolean)[0] || 'Mozilla/5.0';
+  const v = String(vid);
+  if (!d || !d.sources.length) return d;
+  const pick = async (detail) => {
+    const live = [];
+    for (const s of detail.sources) {
+      try {
+        if (await playlistAlive(s.src, ua)) live.push(s);
+      } catch {
+        /* 忽略单条失败，继续验下一档 */
+      }
+    }
+    if (!live.length) return null;
+    return {
+      ...detail,
+      sources: live,
+      episodes: live.map((s) => ({ name: `${s.size || ''}p`.replace(/^p$/, '正片'), url: s.src, vid: v })),
+    };
+  };
+  const first = await pick(d);
+  if (first) return first;
+  console.warn(`[pornhub] ${v} 首抓全灭，重抓换线路`);
+  for (let i = 0; i < 2; i++) {
+    await sleep(1500);
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      let html = '';
+      try {
+        const res = await F(detailUrl(v, site.base), {
+          headers: headersFor(ua, site.base),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) continue;
+        html = await res.text();
+      } finally {
+        clearTimeout(timer);
+      }
+      const nd = parseDetail(html, v);
+      if (!nd.sources.length) continue;
+      const good = await pick(nd);
+      if (good) {
+        console.log(`[pornhub] ${v} 第${i + 2}次抓到可播线路`);
+        return good;
+      }
+    } catch {
+      /* 忽略，继续下一轮 */
+    }
+  }
+  return d;
 }
 
 // 站内真实导航（hohoj 同款）：首页菜单是数字分类 /video?c=<id>（中文 alt 名），
@@ -273,6 +359,7 @@ module.exports = {
   buildSearchUrl,
   detailUrl,
   ensureNavCats,
+  ensurePlayable,
   expandDetailUrl: null,
   parseList,
   parsePageCount,

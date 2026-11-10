@@ -325,9 +325,24 @@ async function fetchPlayableHtml(site, vid) {
 async function resolveMp4(site, vid) {
   cache.delete('html:' + detailPageUrl(site, vid));
   const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
-  const d = site.def.parseDetail(metaHtml, String(vid), playHtml);
+  let d = site.def.parseDetail(metaHtml, String(vid), playHtml);
+  d = await finalizeSources(site, vid, d);
   if (!d.sources.length) throw new Error('no playable source');
   return d.sources[0].src;
+}
+
+// 部分站出链不稳定（如 pornhub 按次分配 CDN 主机，抽到死的就播不了）：
+// 适配器可选实现 ensurePlayable(site, vid, detail) 做验活/换线路，框架只负责调用兜底。
+async function finalizeSources(site, vid, d) {
+  if (d && d.sources && d.sources.length && typeof site.def.ensurePlayable === 'function') {
+    try {
+      const nd = await site.def.ensurePlayable(site, vid, d);
+      if (nd) return nd;
+    } catch (e) {
+      console.warn(`[detail][${site.key}] ensurePlayable 失败，用原解析: ${(e && e.message) || e}`);
+    }
+  }
+  return d;
 }
 
 // 播放列表验活：有些站多线路 CDN 档机房 IP（如 netflixgc 5 条线只剩 1 条能过），
@@ -660,7 +675,8 @@ async function handleDetail(site, req, res) {
             const cached = cacheGet(ckey);
             if (cached) return cached;
             const { metaHtml, playHtml } = await fetchPlayableHtml(site, vid);
-            const d = site.def.parseDetail(metaHtml, vid, playHtml);
+            let d = site.def.parseDetail(metaHtml, vid, playHtml);
+            d = await finalizeSources(site, vid, d);
             // PUBLIC_BASE 指向本服务公网地址时, 选集拼 HLS 直链 (MoonPlus 只收录 .m3u8);
             // 直通站 episodes 自带 url（上游原生 m3u8），原样透传，不走 /h/ 转封装；
             // 否则拼上游站 watch 页 (仅跳转)
